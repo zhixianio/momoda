@@ -57,6 +57,12 @@ class MainActivity : Activity() {
     private val ui by lazy { getSharedPreferences("ui", Context.MODE_PRIVATE) }
     private val settings by lazy { UserSettings(this) }
     private val fonts by lazy { Fonts(assets) { store.dir } }
+    private val updates by lazy {
+        // debug 包可以用 `--es updateApi <url>` 指向本地模拟的发布地址做测试
+        val override = if (BuildConfig.DEBUG) ui.getString("updateApiOverride", null) else null
+        Updates(this, override ?: BuildConfig.UPDATE_API)
+    }
+    private val versionName by lazy { packageManager.getPackageInfo(packageName, 0).versionName ?: "0" }
     private val handler = Handler(Looper.getMainLooper())
     private val saveRunnable = Runnable { save() }
     private val footerRunnable = Runnable { refreshChrome() }
@@ -80,6 +86,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val tStart = SystemClock.uptimeMillis()
+        if (BuildConfig.DEBUG) intent.getStringExtra("updateApi")?.let {
+            getSharedPreferences("ui", Context.MODE_PRIVATE).edit().putString("updateApiOverride", it).apply()
+            getSharedPreferences("updates", Context.MODE_PRIVATE).edit().clear().apply()
+        }
         store = DocStore(this)
         val tStore = SystemClock.uptimeMillis()
 
@@ -122,6 +132,8 @@ class MainActivity : Activity() {
                 Log.i("momoda", "coldStart=${coldStartMs}ms font=${fontLoadMs}ms dir=${store.dir}")
                 // 拼音表只给搜索用，等第一帧画完再在后台读，不和冷启动抢 CPU
                 handler.postDelayed({ Pinyin.warmUp(assets) }, 300)
+                // 检查更新同样推迟，而且每天最多联网一次
+                handler.postDelayed({ checkForUpdates(force = false) }, 3000)
                 return true
             }
         })
@@ -487,6 +499,8 @@ class MainActivity : Activity() {
         add(Command("vim", "Vim 模式开关", "Ctrl+Shift+V", ::toggleVim))
         add(Command("trash", "删除当前文档", "进回收站", ::deleteDoc))
         if (!store.isPublic) add(Command("access", "授权：把文档存到 Documents/momoda", "", ::requestStorageAccess))
+        updates.latest?.let { r -> add(Command("install-update", "安装新版本 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
+        add(Command("check-update", "检查更新", if (updates.configured) "" else "尚未配置发布地址") { checkForUpdates(force = true) })
         add(Command("debug", "调试面板", "Ctrl+Shift+D", ::toggleDebug))
         add(Command("about", "系统设置 · 关于本机", "连点版本号开启开发者选项") {
             openSystemSettings(Settings.ACTION_DEVICE_INFO_SETTINGS, "Settings\$MyDeviceInfoActivity")
@@ -629,6 +643,21 @@ class MainActivity : Activity() {
         else -> "1 行"
     }
 
+    // ---------- 更新 ----------
+
+    private fun checkForUpdates(force: Boolean) {
+        if (!force && !settings.autoUpdate) return
+        updates.check(versionName, force) { release, error ->
+            refreshChrome()
+            if (force) toast(error ?: release?.let { "有新版本 ${it.version}，在命令面板里选择“安装新版本”" } ?: "已经是最新版本 $versionName")
+        }
+    }
+
+    private fun installUpdate(release: Updates.Release) {
+        save()
+        updates.install(release) { status -> toast(status) }
+    }
+
     private fun toggleZen() {
         settings.chrome = !settings.chrome
         applySettings()
@@ -662,7 +691,8 @@ class MainActivity : Activity() {
         headerTitle.text = Titles.titleOf(editor.text) ?: "未命名"
         val words = TextStats.format(TextStats.wordCount(editor.text))
         val where = if (store.isPublic) "" else " · 未授权存储"
-        footer.text = "$words 字 · ${if (dirty) "保存中" else "已保存"}$where"
+        val update = updates.latest?.let { " · 有新版本 ${it.version}" } ?: ""
+        footer.text = "$words 字 · ${if (dirty) "保存中" else "已保存"}$where$update"
     }
 
     /** 页眉右侧：时间，电量低于 20% 时附带电量。按分钟更新。 */

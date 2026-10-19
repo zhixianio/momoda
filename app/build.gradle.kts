@@ -11,8 +11,16 @@ android {
         applicationId = "app.momoda"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.0.1-m0"
+        // CI 打 tag 发布时可以用 -PversionCode=… -PversionName=… 覆盖
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "0.0.1-m0"
+        // 检查更新用的 GitHub Releases 接口，例如 https://api.github.com/repos/<用户>/momoda/releases/latest
+        // 留空表示还没有发布地址，检查更新功能自动关闭
+        buildConfigField("String", "UPDATE_API", "\"\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
