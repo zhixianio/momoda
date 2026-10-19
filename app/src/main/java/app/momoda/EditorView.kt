@@ -30,7 +30,7 @@ import kotlin.math.max
 /**
  * 正文编辑器（DESIGN §2）。
  * - 版心：按“每行约 [charsPerLine] 个汉字”自动算左右留白；横屏时不变宽。
- * - 分段：回车写入空行，空行只占半行高；列表和引用自动延续（[EditRules]）。
+ * - 分段：回车写入空行，空行只占 1/4 行高；列表和引用自动延续（[EditRules]）。
  * - 光标：自己画，不闪烁；vim normal 模式是方块。
  * - 翻页：写作时翻半页，PageUp/PageDown 整页，笔上下滑动翻半页；没有连续滚动。
  * - [preImeKeyHandler]：在按键到达输入法之前拦截，用于快捷键和 vim normal 模式。
@@ -371,15 +371,18 @@ class EditorView(context: Context) : EditText(context) {
         ready = true
     }
 
-    /** 空行（段落之间的分隔）只占半行高，替代整行空白（DESIGN §2.3）。 */
-    private class BlankLineSpacing : LineHeightSpan {
+    /**
+     * 空行（段落之间的分隔）只占 [ratio] 倍行高，替代整行空白（DESIGN §2.3）。
+     * 真机反馈半行高仍然偏大，改为 1/4；M2 做成设置里可调的“段距”。
+     */
+    private class BlankLineSpacing(val ratio: Float = 0.25f) : LineHeightSpan {
         override fun chooseHeight(
             text: CharSequence, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: Paint.FontMetricsInt,
         ) {
             if (end - start != 1 || text[start] != '\n') return
             if (start == 0 || text[start - 1] != '\n') return
-            val half = (fm.descent - fm.ascent) / 2
-            fm.descent = fm.ascent + half
+            // 行距倍数是按字体高度乘出来的，所以直接缩字体高度，整行（含行距）就按同样比例缩小
+            fm.descent = fm.ascent + ((fm.descent - fm.ascent) * ratio).toInt()
             fm.bottom = fm.descent
             fm.top = fm.ascent
         }
