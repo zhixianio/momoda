@@ -118,6 +118,8 @@ class EditorView(context: Context) : EditText(context) {
         rulesEnabled = true
         attachSpacing()
         restyleAll()
+        focusShown = false
+        updateFocus()
     }
 
     private fun attachSpacing() {
@@ -199,7 +201,7 @@ class EditorView(context: Context) : EditText(context) {
      */
     private fun stripForeignStyles(s: Editable) {
         for (span in s.getSpans(0, s.length, CharacterStyle::class.java)) {
-            if (span is MdSpan) continue
+            if (span is MdSpan || span is FocusSpan) continue
             if (s.getSpanFlags(span) and Spanned.SPAN_COMPOSING != 0) continue
             s.removeSpan(span)
         }
@@ -233,6 +235,7 @@ class EditorView(context: Context) : EditText(context) {
         if (!ready) return
         onSelectionChange?.invoke(selStart, selEnd)
         browsing = false
+        updateFocus()
         invalidate()
         removeCallbacks(pageCheck)
         post(pageCheck)
@@ -240,11 +243,44 @@ class EditorView(context: Context) : EditText(context) {
 
     // ---------- 翻页 ----------
 
-    /** 正在翻页回看：暂停“跟着光标翻页”，直到光标移动或开始打字。 */
+    /** 正在翻页回看：暂停“跟着光标翻页”和专注模式，直到光标移动或开始打字。 */
     var browsing = false
         private set(value) {
-            if (field != value) { field = value; onBrowsingChange?.invoke(value) }
+            if (field != value) {
+                field = value
+                onBrowsingChange?.invoke(value)
+                updateFocus()
+            }
         }
+
+    // ---------- 专注模式（DESIGN §2.7） ----------
+
+    /** 光标所在段落是黑色，其余段落浅灰；翻页回看时暂停。 */
+    var focusMode = false
+        set(value) { field = value; updateFocus() }
+
+    private val focusSpan = FocusSpan()
+    private var focusShown = false
+
+    private fun updateFocus() {
+        if (!ready) return
+        val t = text ?: return
+        val active = focusMode && !browsing
+        if (active != focusShown) {
+            focusShown = active
+            setTextColor(if (active) DIM else Color.BLACK)
+            if (!active) t.removeSpan(focusSpan)
+        }
+        if (!active) return
+        val cur = selectionEnd.coerceIn(0, t.length)
+        var start = cur
+        while (start > 0 && t[start - 1] != '\n') start--
+        var end = cur
+        while (end < t.length && t[end] != '\n') end++
+        if (t.getSpanStart(focusSpan) == start && t.getSpanEnd(focusSpan) == end) return
+        // 优先级高于 Markdown 样式：先应用黑色，段内的标记符号再盖成灰色
+        t.setSpan(focusSpan, start, end, Spanned.SPAN_INCLUSIVE_INCLUSIVE or (1 shl Spanned.SPAN_PRIORITY_SHIFT))
+    }
     var onBrowsingChange: ((Boolean) -> Unit)? = null
 
     private val pageCheck = Runnable { keepCursorOnPage() }
@@ -278,7 +314,9 @@ class EditorView(context: Context) : EditText(context) {
         val tooLow = bottom > writableBottom - lineHeight
         val tooHigh = top < scrollY + extendedPaddingTop
         if (tooLow || tooHigh) {
-            scrollTo(0, max(0, top - height / 4))
+            // 专注模式下把当前行放到屏幕中部，视线停在中间；否则放到上部 1/4，一次能多写半屏
+            val anchor = if (focusShown) (height * 0.4f).toInt() else height / 4
+            scrollTo(0, max(0, top - anchor))
         }
     }
 
@@ -289,8 +327,8 @@ class EditorView(context: Context) : EditText(context) {
         val step = ((visible - 2 * lineHeight) * fraction).toInt().coerceAtLeast(lineHeight)
         val maxScroll = max(0, l.height + extendedPaddingTop + extendedPaddingBottom - height)
         var target = (scrollY + direction * step).coerceIn(0, maxScroll)
-        // 对齐到行首，避免顶端出现半行字
-        if (target in 1 until maxScroll) {
+        // 对齐到行首，避免顶端出现半行字（翻到文末时也要对齐，只会往回退，不会超出）
+        if (target > 0) {
             target = l.getLineTop(l.getLineForVertical(target))
         }
         if (target == scrollY) return
@@ -391,6 +429,11 @@ class EditorView(context: Context) : EditText(context) {
     }
 
     fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    companion object {
+        /** 专注模式下非当前段落的颜色：墨水屏上明显变浅，但仍然读得清。 */
+        val DIM = Color.rgb(0xA0, 0xA0, 0xA0)
+    }
 
     init {
         // 放在类的最后：此时所有字段都已初始化

@@ -18,6 +18,13 @@ interface MdSpan
 private const val MARKER_GRAY = 0xFF9A9A9A.toInt()
 private const val RULE_GRAY = 0xFF888888.toInt()
 
+/**
+ * 专注模式：正文整体是浅灰色，这个 Span 把光标所在的段落染回黑色。
+ * 光标换段时只移动这一个 Span，墨水屏上只有新旧两段的颜色变化。
+ * 它的优先级更高，先被应用，所以段内的 [MarkerSpan] 仍然是灰色。
+ */
+class FocusSpan : ForegroundColorSpan(Color.BLACK)
+
 /** 标记符号淡显。 */
 class MarkerSpan : ForegroundColorSpan(MARKER_GRAY), MdSpan
 

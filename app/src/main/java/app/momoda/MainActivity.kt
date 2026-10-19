@@ -95,6 +95,7 @@ class MainActivity : Activity() {
 
         vim = Vim(editor) { }
         vim.enabled = ui.getBoolean("vim", false)
+        editor.focusMode = ui.getBoolean("focus", true)
 
         editor.preImeKeyHandler = ::onKeyPreIme
         editor.postImeKeyHandler = ::onKeyPostIme
@@ -414,6 +415,7 @@ class MainActivity : Activity() {
             keyCode == KeyEvent.KEYCODE_MINUS -> { changeTextSize(-1f); "字号-" }
             keyCode == KeyEvent.KEYCODE_D && shift -> { toggleDebug(); "调试面板" }
             keyCode == KeyEvent.KEYCODE_V && shift -> { toggleVim(); "vim 开关" }
+            keyCode == KeyEvent.KEYCODE_F && shift -> { toggleFocus(); "专注模式" }
             keyCode == KeyEvent.KEYCODE_R && vim.enabled && vim.mode == Vim.Mode.NORMAL -> {
                 vim.handle(keyCode, e); "vim 重做"
             }
@@ -445,6 +447,7 @@ class MainActivity : Activity() {
         add(Command("previous", "切回上一篇", "Ctrl+Tab", ::switchToPrevious))
         add(Command("rename", "修改标题", "", ::renameTitle))
         add(Command("zen", "Zen 模式", "Ctrl+.", ::toggleZen))
+        add(Command("focus", "专注模式开关", "Ctrl+Shift+F", ::toggleFocus))
         add(Command("bigger", "字号放大", "Ctrl+=") { changeTextSize(+1f) })
         add(Command("smaller", "字号缩小", "Ctrl+-") { changeTextSize(-1f) })
         add(Command("vim", "Vim 模式开关", "Ctrl+Shift+V", ::toggleVim))
@@ -539,6 +542,11 @@ class MainActivity : Activity() {
         vim.enabled = !vim.enabled
         ui.edit().putBoolean("vim", vim.enabled).apply()
         toast(if (vim.enabled) "Vim 模式：开（Esc 进入 normal，光标变成方块）" else "Vim 模式：关")
+    }
+
+    private fun toggleFocus() {
+        editor.focusMode = !editor.focusMode
+        ui.edit().putBoolean("focus", editor.focusMode).apply()
     }
 
     private fun toggleDebug() {
