@@ -31,7 +31,7 @@ class EditorView(context: Context) : EditText(context) {
     var postImeKeyHandler: ((Int, KeyEvent) -> Boolean)? = null
     var onSelectionChange: ((Int, Int) -> Unit)? = null
 
-    var charsPerLine = 34
+    var charsPerLine = 30
         set(value) { field = value; updatePadding() }
 
     private var pendingKeyTime = 0L
@@ -89,7 +89,7 @@ class EditorView(context: Context) : EditText(context) {
     private fun updatePadding() {
         if (width == 0) return
         val column = paint.measureText("中") * charsPerLine
-        val side = max(dp(24).toFloat(), (width - column) / 2f).toInt()
+        val side = max(dp(40).toFloat(), (width - column) / 2f).toInt()
         setPadding(side, dp(56), side, dp(56))
     }
 

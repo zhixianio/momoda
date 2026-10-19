@@ -2,7 +2,9 @@ package app.momoda
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
@@ -33,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var editor: EditorView
     private lateinit var status: TextView
     private lateinit var debug: TextView
+    private lateinit var menuButton: TextView
     private lateinit var vim: Vim
     private lateinit var doc: File
 
@@ -79,10 +82,24 @@ class MainActivity : Activity() {
             visibility = TextView.GONE
         }
 
+        // 笔/触控入口：右下角的“⋯”常驻（zen 模式下也在），点状态栏也能打开命令面板。
+        // 用软键盘或笔的时候没有 Ctrl+K，这是唯一入口。
+        menuButton = TextView(this).apply {
+            text = "⋯"
+            setTextColor(Color.rgb(0x88, 0x88, 0x88))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            gravity = Gravity.CENTER
+            contentDescription = "命令"
+            isFocusable = false
+            setOnClickListener { showPalette() }
+        }
+        status.setOnClickListener { showPalette() }
+
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.WHITE)
             addView(editor, FrameLayout.LayoutParams(-1, -1).apply { bottomMargin = editor.dp(36) })
             addView(status, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            addView(menuButton, FrameLayout.LayoutParams(editor.dp(48), editor.dp(48), Gravity.BOTTOM or Gravity.END))
             addView(debug, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
                 topMargin = editor.dp(8); rightMargin = editor.dp(8)
             })
@@ -255,11 +272,34 @@ class MainActivity : Activity() {
             "Vim 模式开关　Ctrl+Shift+V" to ::toggleVim,
             "调试面板　Ctrl+Shift+D" to ::toggleDebug,
             "删除当前文档（进回收站）" to ::deleteDoc,
+            "系统设置 · 关于本机（连点版本号开启开发者选项）" to {
+                openSystemSettings(Settings.ACTION_DEVICE_INFO_SETTINGS, "Settings\$MyDeviceInfoActivity")
+            },
+            "系统设置 · 开发者选项" to {
+                openSystemSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, "Settings\$DevelopmentSettingsDashboardActivity")
+            },
         )
         AlertDialog.Builder(this)
             .setTitle("命令")
             .setItems(cmds.map { it.first }.toTypedArray()) { _, i -> cmds[i].second() }
             .show()
+    }
+
+    /** 有些墨水屏厂商的定制设置里藏掉了这些页面，直接拉起系统原生设置。 */
+    private fun openSystemSettings(action: String, fallbackActivity: String) {
+        val intents = listOf(
+            Intent(action),
+            Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.$fallbackActivity")),
+        )
+        for (intent in intents) {
+            try {
+                startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return
+            } catch (e: Exception) {
+                Log.w("momoda", "无法打开 $intent", e)
+            }
+        }
+        toast("这台设备打不开该设置页")
     }
 
     private fun deleteDoc() {

@@ -15,6 +15,7 @@ confirm "卸载 Android 命令行工具及 SDK（/opt/homebrew/share/android-com
 
 # 注意：Homebrew 的 openjdk（最新版）在安装本工具链之前就已存在，这里不动它。
 confirm "卸载 Gradle（仅用于生成 wrapper）？" && brew uninstall gradle
+confirm "卸载 MTP 命令行工具（android-file-transfer-linux）？" && brew uninstall android-file-transfer-linux
 confirm "卸载 JDK 17（openjdk@17）？" && brew uninstall openjdk@17
 confirm "清理 Homebrew 中不再被依赖的包（brew autoremove，会先列出）？" && brew autoremove
 
