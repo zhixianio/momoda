@@ -55,6 +55,8 @@ class MainActivity : Activity() {
     private lateinit var doc: File
 
     private val ui by lazy { getSharedPreferences("ui", Context.MODE_PRIVATE) }
+    private val settings by lazy { UserSettings(this) }
+    private val fonts by lazy { Fonts(assets) { store.dir } }
     private val handler = Handler(Looper.getMainLooper())
     private val saveRunnable = Runnable { save() }
     private val footerRunnable = Runnable { refreshChrome() }
@@ -67,8 +69,6 @@ class MainActivity : Activity() {
     }
     private var dirty = false
 
-    private var zen = false
-    private var textSizeSp = 20f
     private var fontLoadMs = 0L
     private var coldStartMs = -1L
 
@@ -82,20 +82,16 @@ class MainActivity : Activity() {
         val tStart = SystemClock.uptimeMillis()
         store = DocStore(this)
         val tStore = SystemClock.uptimeMillis()
-        textSizeSp = ui.getFloat("textSize", 20f)
 
         editor = EditorView(this)
         val t0 = SystemClock.uptimeMillis()
-        font = Typeface.createFromAsset(assets, "fonts/LXGWWenKaiScreen.ttf")
+        font = fonts.load(settings.font)
         fontLoadMs = SystemClock.uptimeMillis() - t0
-        editor.setFont(font)
-        editor.setTextSizeSp(textSizeSp)
 
         buildLayout()
 
         vim = Vim(editor) { }
-        vim.enabled = ui.getBoolean("vim", false)
-        editor.focusMode = ui.getBoolean("focus", true)
+        applySettings()
 
         editor.preImeKeyHandler = ::onKeyPreIme
         editor.postImeKeyHandler = ::onKeyPostIme
@@ -411,6 +407,7 @@ class MainActivity : Activity() {
                 setHeading(level); if (level == 0) "正文" else "标题 $level"
             }
             keyCode == KeyEvent.KEYCODE_PERIOD -> { toggleZen(); "zen" }
+            keyCode == KeyEvent.KEYCODE_COMMA -> { showSettings(); "设置" }
             keyCode == KeyEvent.KEYCODE_EQUALS || keyCode == KeyEvent.KEYCODE_PLUS -> { changeTextSize(+1f); "字号+" }
             keyCode == KeyEvent.KEYCODE_MINUS -> { changeTextSize(-1f); "字号-" }
             keyCode == KeyEvent.KEYCODE_D && shift -> { toggleDebug(); "调试面板" }
@@ -446,6 +443,7 @@ class MainActivity : Activity() {
         add(Command("switch", "打开文档", "Ctrl+O", ::showSwitcher))
         add(Command("previous", "切回上一篇", "Ctrl+Tab", ::switchToPrevious))
         add(Command("rename", "修改标题", "", ::renameTitle))
+        add(Command("settings", "设置", "Ctrl+,", ::showSettings))
         add(Command("zen", "Zen 模式", "Ctrl+.", ::toggleZen))
         add(Command("focus", "专注模式开关", "Ctrl+Shift+F", ::toggleFocus))
         add(Command("bigger", "字号放大", "Ctrl+=") { changeTextSize(+1f) })
@@ -525,28 +523,95 @@ class MainActivity : Activity() {
         text.replace(start, start + existing, prefix)
     }
 
-    private fun toggleZen() {
-        zen = !zen
-        val v = if (zen) View.GONE else View.VISIBLE
+    // ---------- 设置 ----------
+
+    /** 把 [settings] 全部应用到界面上。启动时和设置变化后调用。 */
+    private fun applySettings() {
+        applyFont(fonts.load(settings.font))
+        editor.setTextSizeSp(settings.textSize)
+        editor.setLineSpacingMultiplier(settings.lineSpacing)
+        editor.paragraphSpacing = settings.paragraphSpacing
+        editor.charsPerLine = settings.charsPerLine
+        editor.indentParagraphs = settings.indent
+        editor.focusMode = settings.focus
+        if (vim.enabled != settings.vim) vim.enabled = settings.vim
+        val v = if (settings.chrome) View.VISIBLE else View.GONE
         header.visibility = v
         footer.visibility = v
     }
 
+    /** 全局统一一种字体：正文、页眉页脚、弹窗（DESIGN §2.8）。 */
+    private fun applyFont(tf: Typeface) {
+        font = tf
+        editor.setFont(tf)
+        headerTitle.typeface = tf
+        headerClock.typeface = tf
+        footer.typeface = tf
+    }
+
+    private fun showSettings() {
+        save()
+        fun <T> step(list: List<T>, now: T, d: Int): T = list[(list.indexOf(now).coerceAtLeast(0) + d).coerceIn(0, list.size - 1)]
+        fun onOff(b: Boolean) = if (b) "开" else "关"
+        val rows = listOf(
+            SettingsPanel.Row("字体", { fonts.available().firstOrNull { it.key == settings.font }?.label ?: fonts.builtIn.label }, { d ->
+                val all = fonts.available()
+                settings.font = step(all, all.firstOrNull { it.key == settings.font } ?: fonts.builtIn, d).key
+                applySettings()
+            }),
+            SettingsPanel.Row("字号", { "%.0f".format(settings.textSize) }, { d -> settings.textSize += d; applySettings() }),
+            SettingsPanel.Row("行距", { "%.2f".format(settings.lineSpacing).trimEnd('0').trimEnd('.') }, { d ->
+                settings.lineSpacing = step(UserSettings.LINE_SPACINGS, settings.lineSpacing, d); applySettings()
+            }),
+            SettingsPanel.Row("段距", { paragraphLabel(settings.paragraphSpacing) }, { d ->
+                settings.paragraphSpacing = step(UserSettings.PARAGRAPH_SPACINGS, settings.paragraphSpacing, d); applySettings()
+            }),
+            SettingsPanel.Row("版心宽度", { "每行 ${settings.charsPerLine} 字" }, { d -> settings.charsPerLine += 2 * d; applySettings() }),
+            SettingsPanel.Row("段首缩进两字", { onOff(settings.indent) }, { settings.indent = !settings.indent; applySettings() }, isToggle = true),
+            SettingsPanel.Row("页眉页脚", { onOff(settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true),
+            SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true),
+            SettingsPanel.Row("Vim 模式", { onOff(settings.vim) }, { settings.vim = !settings.vim; applySettings() }, isToggle = true),
+            SettingsPanel.Row("自动检查更新", { onOff(settings.autoUpdate) }, { settings.autoUpdate = !settings.autoUpdate }, isToggle = true),
+        )
+        val version = packageManager.getPackageInfo(packageName, 0).versionName
+        val footnote = buildString {
+            appendLine("文档目录：${store.dir.absolutePath.removePrefix("/storage/emulated/0/")}")
+            appendLine("外部字体：把 .ttf / .otf 放进 ${fonts.folder().absolutePath.removePrefix("/storage/emulated/0/")}")
+            appendLine()
+            appendLine("墨墨打 $version")
+            appendLine("字体：霞鹜文楷屏幕阅读版（SIL Open Font License 1.1）")
+            append("拼音数据：Unicode Unihan")
+        }
+        SettingsPanel(this, font, rows, footnote, onDismiss = ::returnToEditor).show()
+    }
+
+    private fun paragraphLabel(r: Float) = when (r) {
+        0f -> "无"
+        0.25f -> "1/4 行"
+        0.5f -> "1/2 行"
+        0.75f -> "3/4 行"
+        else -> "1 行"
+    }
+
+    private fun toggleZen() {
+        settings.chrome = !settings.chrome
+        applySettings()
+    }
+
     private fun changeTextSize(delta: Float) {
-        textSizeSp = (textSizeSp + delta).coerceIn(14f, 36f)
-        editor.setTextSizeSp(textSizeSp)
-        ui.edit().putFloat("textSize", textSizeSp).apply()
+        settings.textSize += delta
+        editor.setTextSizeSp(settings.textSize)
     }
 
     private fun toggleVim() {
-        vim.enabled = !vim.enabled
-        ui.edit().putBoolean("vim", vim.enabled).apply()
+        settings.vim = !settings.vim
+        applySettings()
         toast(if (vim.enabled) "Vim 模式：开（Esc 进入 normal，光标变成方块）" else "Vim 模式：关")
     }
 
     private fun toggleFocus() {
-        editor.focusMode = !editor.focusMode
-        ui.edit().putBoolean("focus", editor.focusMode).apply()
+        settings.focus = !settings.focus
+        applySettings()
     }
 
     private fun toggleDebug() {

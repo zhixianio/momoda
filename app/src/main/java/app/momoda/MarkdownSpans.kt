@@ -75,6 +75,15 @@ class HangingIndentSpan(private val rest: Int) : LeadingMarginSpan, MdSpan {
     ) = Unit
 }
 
+/** 段首缩进两字。 */
+class IndentSpan(private val width: Int) : LeadingMarginSpan, MdSpan {
+    override fun getLeadingMargin(first: Boolean) = if (first) width else 0
+    override fun drawLeadingMargin(
+        c: Canvas, p: Paint, x: Int, dir: Int, top: Int, baseline: Int, bottom: Int,
+        text: CharSequence, start: Int, end: Int, first: Boolean, layout: Layout,
+    ) = Unit
+}
+
 /** 分隔线：在这一行中间画一条横线，`---` 本身淡显。 */
 class RuleSpan(private val thickness: Float) : LineBackgroundSpan, MdSpan {
     override fun drawBackground(
@@ -92,6 +101,9 @@ class RuleSpan(private val thickness: Float) : LineBackgroundSpan, MdSpan {
 
 /** 按行把 [Markdown.parseLine] 的结果挂到 Editable 上。 */
 class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) -> Float) {
+
+    /** 普通段落段首缩进两字（标题、列表、引用、分隔线不缩进）。 */
+    var indent = false
 
     /** 重新渲染与 [from, to) 有交集的所有行。 */
     fun restyle(text: Editable, from: Int, to: Int) {
@@ -118,7 +130,11 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
         }
         if (end <= start) return
         val line = text.subSequence(start, end).toString()
-        for (st in Markdown.parseLine(line)) {
+        val styles = Markdown.parseLine(line)
+        if (indent && line.isNotBlank() && styles.none { it.kind in BLOCK_KINDS }) {
+            para(text, IndentSpan(measure("中中").toInt()), start, paraEnd)
+        }
+        for (st in styles) {
             val s = start + st.start
             val e = start + st.end
             when (st.kind) {
@@ -141,6 +157,13 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
 
     private fun para(text: Editable, span: Any, s: Int, e: Int) {
         if (e > s) text.setSpan(span, s, e, Spanned.SPAN_PARAGRAPH)
+    }
+
+    private companion object {
+        val BLOCK_KINDS = setOf(
+            Markdown.Kind.HEADING1, Markdown.Kind.HEADING2, Markdown.Kind.HEADING3,
+            Markdown.Kind.QUOTE, Markdown.Kind.LIST_ITEM, Markdown.Kind.RULE,
+        )
     }
 
     private fun lineStartOf(text: CharSequence, pos: Int): Int {

@@ -106,6 +106,19 @@ class EditorView(context: Context) : EditText(context) {
 
     private val styler = MarkdownStyler(resources.displayMetrics.density) { paint.measureText(it.toString()) }
 
+    /** 行距倍数。 */
+    fun setLineSpacingMultiplier(mult: Float) = setLineSpacing(0f, mult)
+
+    /** 段距：段落之间的空行占几分之一行高（0 表示空行不占高度）。 */
+    var paragraphSpacing: Float
+        get() = spacing.ratio
+        set(v) { spacing.ratio = v; attachSpacing() }
+
+    /** 段首缩进两字（只影响显示，不改文件）。 */
+    var indentParagraphs: Boolean
+        get() = styler.indent
+        set(v) { styler.indent = v; restyleAll() }
+
     private fun restyleAll() {
         val t = text ?: return
         styler.restyleAll(t)
@@ -444,7 +457,7 @@ class EditorView(context: Context) : EditText(context) {
      * 空行（段落之间的分隔）只占 [ratio] 倍行高，替代整行空白（DESIGN §2.3）。
      * 真机反馈半行高仍然偏大，改为 1/4；M2 做成设置里可调的“段距”。
      */
-    private class BlankLineSpacing(val ratio: Float = 0.25f) : LineHeightSpan {
+    private class BlankLineSpacing(var ratio: Float = 0.25f) : LineHeightSpan {
         override fun chooseHeight(
             text: CharSequence, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: Paint.FontMetricsInt,
         ) {
