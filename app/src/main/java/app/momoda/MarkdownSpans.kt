@@ -75,6 +75,15 @@ class HangingIndentSpan(private val rest: Int) : LeadingMarginSpan, MdSpan {
     ) = Unit
 }
 
+/**
+ * 中文语境里的引号用全角字形（OpenType `fwid`）。霞鹜文楷默认把 “” 排成西文宽度，
+ * 夹在汉字中间显得局促。只作用于紧挨着汉字的引号，英文里的引号保持原样。
+ */
+class FullWidthQuoteSpan : MetricAffectingSpan(), MdSpan {
+    override fun updateDrawState(tp: TextPaint) { tp.fontFeatureSettings = "'fwid'" }
+    override fun updateMeasureState(tp: TextPaint) { tp.fontFeatureSettings = "'fwid'" }
+}
+
 /** 段首缩进两字。 */
 class IndentSpan(private val width: Int) : LeadingMarginSpan, MdSpan {
     override fun getLeadingMargin(first: Boolean) = if (first) width else 0
@@ -133,6 +142,16 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
         val styles = Markdown.parseLine(line)
         if (indent && line.isNotBlank() && styles.none { it.kind in BLOCK_KINDS }) {
             para(text, IndentSpan(measure("中中").toInt()), start, paraEnd)
+        }
+        for (i in line.indices) {
+            val c = line[i]
+            if (c == '“' || c == '”' || c == '‘' || c == '’') {
+                val before = line.getOrNull(i - 1)
+                val after = line.getOrNull(i + 1)
+                if ((before != null && TextStats.isCjk(before)) || (after != null && TextStats.isCjk(after))) {
+                    char(text, FullWidthQuoteSpan(), start + i, start + i + 1)
+                }
+            }
         }
         for (st in styles) {
             val s = start + st.start
