@@ -84,13 +84,15 @@ class EditorView(context: Context) : EditText(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         updatePadding()
+        post(pageCheck)
     }
 
     private fun updatePadding() {
         if (width == 0) return
         val column = paint.measureText("中") * charsPerLine
         val side = max(dp(40).toFloat(), (width - column) / 2f).toInt()
-        setPadding(side, dp(56), side, dp(56))
+        // 底部留出约 1/3 屏的空白，最后一行也能被翻到屏幕中上部，不会被输入法的候选栏挡住
+        setPadding(side, dp(56), side, max(dp(56), height / 3))
     }
 
     override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
@@ -109,6 +111,27 @@ class EditorView(context: Context) : EditText(context) {
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
         onSelectionChange?.invoke(selStart, selEnd)
+        removeCallbacks(pageCheck)
+        post(pageCheck)
+    }
+
+    private val pageCheck = Runnable { keepCursorOnPage() }
+
+    /**
+     * 翻半页：光标快到可写区域底部时，一次把它所在行推到屏幕上部 1/4 处。
+     * 不做逐行滚动——墨水屏上每滚一行都是一次整屏刷新。
+     */
+    private fun keepCursorOnPage() {
+        val l = layout ?: return
+        val line = l.getLineForOffset(selectionEnd.coerceAtLeast(0))
+        val top = l.getLineTop(line) + extendedPaddingTop
+        val bottom = l.getLineBottom(line) + extendedPaddingTop
+        val writableBottom = scrollY + height - extendedPaddingBottom
+        val tooLow = bottom > writableBottom - lineHeight
+        val tooHigh = top < scrollY + extendedPaddingTop
+        if (tooLow || tooHigh) {
+            scrollTo(0, max(0, top - height / 4))
+        }
     }
 
     override fun onDraw(canvas: Canvas) {

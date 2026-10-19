@@ -2,11 +2,12 @@ package app.momoda
 
 import android.icu.text.BreakIterator
 import android.view.KeyEvent
+import android.view.inputmethod.InputMethodManager
 import java.util.Locale
 
 /**
  * M0 的 vim 最小实现：验证 normal 模式能在输入法之前截获按键。
- * 支持 hjkl w b 0 $ gg G x dd u Ctrl+R i a A I o O，Esc 回到 normal。
+ * 支持 hjkl w b 0 $ gg G x dd u Ctrl+R i a A I o O，Esc 回到 normal（对任何输入法都立即生效）。
  * j/k/0/$ 按屏幕上的视觉行移动（相当于 vim 的 gj/gk），更适合不分行的散文。
  */
 class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Unit) {
@@ -24,13 +25,24 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
 
     private var pending: Char? = null
     private val words = BreakIterator.getWordInstance(Locale.CHINA)
+    private val imm = editor.context.getSystemService(InputMethodManager::class.java)
 
     /** 返回 true 表示按键已被消费，不再交给输入法和编辑器。 */
     fun handle(keyCode: Int, event: KeyEvent): Boolean {
         if (!enabled) return false
-        // INSERT 模式的按键全部交给输入法；Esc 由 [escapeAfterIme] 在输入法之后处理
-        if (mode == Mode.INSERT) return false
-        // NORMAL：吞掉所有按键（Ctrl 组合键已经在上游处理过）
+        if (mode == Mode.INSERT) {
+            // Esc 立刻切到 normal，但不消费：照样交给输入法，让它收起候选、清掉拼写。
+            // 不能等输入法“放行”Esc 再切换：汉王输入法会吞掉所有 Esc，fcitx5 有联想时也会吞一次。
+            if (keyCode == KeyEvent.KEYCODE_ESCAPE && event.action == KeyEvent.ACTION_DOWN) {
+                setMode(Mode.NORMAL)
+                // 把输入法内部可能残留的拼音缓冲清掉，免得回到 insert 时接着拼
+                editor.post { imm.restartInput(editor) }
+            }
+            return false
+        }
+        // NORMAL：吞掉所有按键（Ctrl 组合键已经在上游处理过）。
+        // 例外是 Esc 的抬起，它的按下刚交给了输入法，抬起也给它，保持成对。
+        if (keyCode == KeyEvent.KEYCODE_ESCAPE) return event.action == KeyEvent.ACTION_DOWN
         if (event.action != KeyEvent.ACTION_DOWN) return true
         if (event.isCtrlPressed && keyCode == KeyEvent.KEYCODE_R) {
             editor.onKeyShortcut(KeyEvent.KEYCODE_Z, ctrlShift(event, KeyEvent.KEYCODE_Z))
@@ -61,16 +73,6 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
             ch == 'o' -> { val e = paragraphEnd(cursor); text.insert(e, "\n"); move(e + 1); setMode(Mode.INSERT) }
             ch == 'O' -> { val s = paragraphStart(cursor); text.insert(s, "\n"); move(s); setMode(Mode.INSERT) }
         }
-        return true
-    }
-
-    /**
-     * 输入法没有消费的 Esc 才会走到这里。很多输入法（如 fcitx5）的拼音只显示在候选框里，
-     * App 无从判断“是否在拼写”，所以先让输入法处理 Esc（取消拼写），它不要才切到 normal。
-     */
-    fun escapeAfterIme(): Boolean {
-        if (!enabled || mode != Mode.INSERT) return false
-        setMode(Mode.NORMAL)
         return true
     }
 

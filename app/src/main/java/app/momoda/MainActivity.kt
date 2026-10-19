@@ -1,7 +1,6 @@
 package app.momoda
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -24,6 +23,7 @@ import android.view.KeyEvent
 import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -36,6 +36,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var debug: TextView
     private lateinit var menuButton: TextView
+    private lateinit var font: Typeface
     private lateinit var vim: Vim
     private lateinit var doc: File
 
@@ -60,7 +61,7 @@ class MainActivity : Activity() {
 
         editor = EditorView(this)
         val t0 = SystemClock.uptimeMillis()
-        val font = Typeface.createFromAsset(assets, "fonts/LXGWWenKaiScreen.ttf")
+        font = Typeface.createFromAsset(assets, "fonts/LXGWWenKaiScreen.ttf")
         fontLoadMs = SystemClock.uptimeMillis() - t0
         editor.setFont(font)
         editor.setTextSizeSp(textSizeSp)
@@ -173,10 +174,9 @@ class MainActivity : Activity() {
 
     private fun showDocList() {
         val files = store.list()
-        AlertDialog.Builder(this)
-            .setTitle("文档（${files.size}）")
-            .setItems(files.map { it.nameWithoutExtension }.toTypedArray()) { _, i -> open(files[i]) }
-            .show()
+        InkList.show(this, "文档（${files.size}）", files.map { it.nameWithoutExtension }, font, ::returnToEditor) { i ->
+            open(files[i])
+        }
     }
 
     // ---------- 按键 ----------
@@ -205,7 +205,7 @@ class MainActivity : Activity() {
             return true
         }
 
-        KeyLog.add(event, "输入法/编辑器")
+        KeyLog.add(event, if (vim.enabled) "输入法/编辑器（vim ${vim.mode}）" else "输入法/编辑器")
         refreshDebug()
         return false
     }
@@ -214,8 +214,7 @@ class MainActivity : Activity() {
     private fun onKeyPostIme(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode != KeyEvent.KEYCODE_ESCAPE) return false
         if (event.action == KeyEvent.ACTION_DOWN) {
-            val toNormal = vim.escapeAfterIme()
-            KeyLog.add(event, if (toNormal) "vim → NORMAL" else "吞掉 Esc（输入法未使用）")
+            KeyLog.add(event, "吞掉 Esc（输入法未使用）")
             refreshDebug()
         }
         return true
@@ -279,10 +278,7 @@ class MainActivity : Activity() {
                 openSystemSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, "Settings\$DevelopmentSettingsDashboardActivity")
             },
         )
-        AlertDialog.Builder(this)
-            .setTitle("命令")
-            .setItems(cmds.map { it.first }.toTypedArray()) { _, i -> cmds[i].second() }
-            .show()
+        InkList.show(this, "命令", cmds.map { it.first }, font, ::returnToEditor) { i -> cmds[i].second() }
     }
 
     /** 有些墨水屏厂商的定制设置里藏掉了这些页面，直接拉起系统原生设置。 */
@@ -300,6 +296,15 @@ class MainActivity : Activity() {
             }
         }
         toast("这台设备打不开该设置页")
+    }
+
+    /**
+     * 弹窗关闭后把焦点和输入法连接还给编辑器。
+     * 否则有的输入法（汉王）会继续往已经关掉的弹窗里上屏，表现为“光标消失、字不知去向”。
+     */
+    private fun returnToEditor() {
+        editor.requestFocus()
+        getSystemService(InputMethodManager::class.java).restartInput(editor)
     }
 
     private fun deleteDoc() {
