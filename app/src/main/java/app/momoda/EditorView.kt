@@ -3,26 +3,37 @@ package app.momoda
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.graphics.text.LineBreakConfig
 import android.os.Build
 import android.os.SystemClock
+import android.text.Editable
 import android.text.InputType
 import android.text.Layout
+import android.text.Spanned
+import android.text.TextWatcher
+import android.text.style.CharacterStyle
+import android.text.style.LineHeightSpan
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * 正文编辑器。
- * - 版心：按“每行约 [charsPerLine] 个汉字”自动算左右留白。
+ * 正文编辑器（DESIGN §2）。
+ * - 版心：按“每行约 [charsPerLine] 个汉字”自动算左右留白；横屏时不变宽。
+ * - 分段：回车写入空行，空行只占半行高；列表和引用自动延续（[EditRules]）。
+ * - 光标：自己画，不闪烁；vim normal 模式是方块。
+ * - 翻页：写作时翻半页，PageUp/PageDown 整页，笔上下滑动翻半页；没有连续滚动。
  * - [preImeKeyHandler]：在按键到达输入法之前拦截，用于快捷键和 vim normal 模式。
- * - 记录“按键 → 重绘”的延迟，M0 用来评估墨水屏上的打字手感。
  */
 class EditorView(context: Context) : EditText(context) {
 
@@ -34,6 +45,12 @@ class EditorView(context: Context) : EditText(context) {
     var charsPerLine = 30
         set(value) { field = value; updatePadding() }
 
+    /** 载入文档时关掉分段规则，避免把文件里已有的换行再改一遍。 */
+    var rulesEnabled = true
+
+    var blockCursor = false
+        set(value) { field = value; invalidate() }
+
     private var pendingKeyTime = 0L
     var lastLatencyMs = -1L
         private set
@@ -41,16 +58,26 @@ class EditorView(context: Context) : EditText(context) {
         private set
     var onLatency: ((Long) -> Unit)? = null
 
+    private val cursorPaint = Paint().apply { color = Color.BLACK }
+    private val invertedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xAA, 0xAA, 0xAA) }
+    private val spacing = BlankLineSpacing()
+
+    /** TextView 的构造函数会回调下面的重写方法，那时本类的字段还没初始化。 */
+    private var ready = false
+
     init {
         setBackgroundColor(Color.WHITE)
         setTextColor(Color.BLACK)
+        highlightColor = Color.rgb(0xCC, 0xCC, 0xCC)
         setLineSpacing(0f, 1.75f)
         gravity = Gravity.TOP or Gravity.START
         isVerticalScrollBarEnabled = false
         overScrollMode = OVER_SCROLL_NEVER
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
         imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
-        breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
+        // 简单断行：打字时不会为了“整段均衡”去改前面几行的断行位置（DESIGN §2.1）
+        breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
         if (Build.VERSION.SDK_INT >= 33) {
             // 严格的 CJK 避头尾：句号、逗号、右括号不出现在行首
             lineBreakStyle = LineBreakConfig.LINE_BREAK_STYLE_STRICT
@@ -58,11 +85,14 @@ class EditorView(context: Context) : EditText(context) {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
         // 让引号、破折号等“宽度有歧义”的标点按中文字形（全角）排
         textLocale = Locale.SIMPLIFIED_CHINESE
-        setBlockCursor(false)
+        // 系统光标会闪烁，每 0.5 秒改变一次画面；改为自己画一个常亮的光标
+        isCursorVisible = false
     }
 
     fun setFont(typeface: Typeface) {
         this.typeface = typeface
+        invertedPaint.typeface = typeface
+        hintPaint.typeface = typeface
         updatePadding()
     }
 
@@ -71,20 +101,24 @@ class EditorView(context: Context) : EditText(context) {
         updatePadding()
     }
 
-    /** normal 模式用方块光标，insert 模式用细线光标。 */
-    fun setBlockCursor(block: Boolean) {
-        if (Build.VERSION.SDK_INT < 29) return
-        val w = if (block) (textSize * 0.6f).toInt() else dp(2)
-        textCursorDrawable = GradientDrawable().apply {
-            setColor(Color.BLACK)
-            setSize(w, textSize.toInt())
-        }
+    /** 载入整篇文档：不触发分段规则，并挂上段距样式。 */
+    fun load(content: String) {
+        rulesEnabled = false
+        setText(content)
+        rulesEnabled = true
+        attachSpacing()
+    }
+
+    private fun attachSpacing() {
+        val t = text ?: return
+        t.removeSpan(spacing)
+        t.setSpan(spacing, 0, t.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         updatePadding()
-        post(pageCheck)
+        if (ready) post(pageCheck)
     }
 
     private fun updatePadding() {
@@ -92,28 +126,100 @@ class EditorView(context: Context) : EditText(context) {
         val column = paint.measureText("中") * charsPerLine
         val side = max(dp(40).toFloat(), (width - column) / 2f).toInt()
         // 底部留出约 1/3 屏的空白，最后一行也能被翻到屏幕中上部，不会被输入法的候选栏挡住
-        setPadding(side, dp(56), side, max(dp(56), height / 3))
+        setPadding(side, dp(40), side, max(dp(56), height / 3))
     }
+
+    // ---------- 分段与列表规则 ----------
+
+    private var softBreakPending = false
+
+    private val rules = object : TextWatcher {
+        private var deletedNewlineAt = -1
+        private var insertedNewlineAt = -1
+        private var applying = false
+
+        override fun beforeTextChanged(s: CharSequence, start: Int, count: Int, after: Int) {
+            deletedNewlineAt = if (count == 1 && after == 0 && s[start] == '\n') start else -1
+        }
+
+        override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {
+            insertedNewlineAt = if (before == 0 && count == 1 && s[start] == '\n') start else -1
+        }
+
+        override fun afterTextChanged(s: Editable) {
+            browsing = false
+            stripForeignStyles(s)
+            if (applying || !rulesEnabled) return
+            val soft = softBreakPending
+            softBreakPending = false
+            val edit = when {
+                insertedNewlineAt >= 0 -> EditRules.afterNewline(s, insertedNewlineAt, soft)
+                deletedNewlineAt >= 0 -> EditRules.afterNewlineDeleted(s, deletedNewlineAt)
+                else -> null
+            } ?: return
+            applying = true
+            s.replace(edit.start, edit.end, edit.text)
+            setSelection(edit.cursor.coerceIn(0, s.length))
+            applying = false
+        }
+    }
+
+    init {
+        addTextChangedListener(rules)
+    }
+
+    /**
+     * 纯文本编辑器：输入法上屏的文字有时带着斜体、下划线等样式（fcitx5 英文模式下观察到斜体），
+     * 这里全部去掉，只保留输入法正在拼写的标记（SPAN_COMPOSING）和我们自己的段距样式。
+     */
+    private fun stripForeignStyles(s: Editable) {
+        for (span in s.getSpans(0, s.length, CharacterStyle::class.java)) {
+            if (s.getSpanFlags(span) and Spanned.SPAN_COMPOSING != 0) continue
+            s.removeSpan(span)
+        }
+    }
+
+    // ---------- 按键 ----------
 
     override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN && !KeyEvent.isModifierKey(keyCode)) {
             pendingKeyTime = event.eventTime
+            if (keyCode == KeyEvent.KEYCODE_ENTER) softBreakPending = event.isShiftPressed
         }
         return preImeKeyHandler?.invoke(keyCode, event) ?: false || super.onKeyPreIme(keyCode, event)
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        postImeKeyHandler?.invoke(keyCode, event) == true || super.onKeyDown(keyCode, event)
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_PAGE_DOWN -> { page(+1, 1f); return true }
+            KeyEvent.KEYCODE_PAGE_UP -> { page(-1, 1f); return true }
+        }
+        return postImeKeyHandler?.invoke(keyCode, event) == true || super.onKeyDown(keyCode, event)
+    }
 
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean =
-        postImeKeyHandler?.invoke(keyCode, event) == true || super.onKeyUp(keyCode, event)
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_PAGE_DOWN || keyCode == KeyEvent.KEYCODE_PAGE_UP) return true
+        return postImeKeyHandler?.invoke(keyCode, event) == true || super.onKeyUp(keyCode, event)
+    }
 
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
+        if (!ready) return
         onSelectionChange?.invoke(selStart, selEnd)
+        browsing = false
+        invalidate()
         removeCallbacks(pageCheck)
         post(pageCheck)
     }
+
+    // ---------- 翻页 ----------
+
+    /** 正在翻页回看：暂停“跟着光标翻页”，直到光标移动或开始打字。 */
+    var browsing = false
+        private set(value) {
+            if (field != value) { field = value; onBrowsingChange?.invoke(value) }
+        }
+    var onBrowsingChange: ((Boolean) -> Unit)? = null
 
     private val pageCheck = Runnable { keepCursorOnPage() }
 
@@ -123,20 +229,21 @@ class EditorView(context: Context) : EditText(context) {
      * 表现为“上面的文字往上闪一下又回来”。
      */
     override fun bringPointIntoView(offset: Int): Boolean {
-        post(pageCheck)
+        if (ready) post(pageCheck)
         return false
     }
 
     override fun bringPointIntoView(offset: Int, requestRectWithoutFocus: Boolean): Boolean {
-        post(pageCheck)
+        if (ready) post(pageCheck)
         return false
     }
 
     /**
      * 翻半页：光标快到可写区域底部时，一次把它所在行推到屏幕上部 1/4 处。
-     * 不做逐行滚动——墨水屏上每滚一行都是一次整屏刷新。
+     * 不做逐行滚动——墨水屏上每滚一行都是一次整屏变化。
      */
     private fun keepCursorOnPage() {
+        if (browsing) return
         val l = layout ?: return
         val line = l.getLineForOffset(selectionEnd.coerceAtLeast(0))
         val top = l.getLineTop(line) + extendedPaddingTop
@@ -149,18 +256,72 @@ class EditorView(context: Context) : EditText(context) {
         }
     }
 
+    /** 翻页回看：[fraction] = 1 整页（保留两行衔接），0.5 半页。不移动光标。 */
+    fun page(direction: Int, fraction: Float) {
+        val l = layout ?: return
+        val visible = height - extendedPaddingTop - extendedPaddingBottom
+        val step = ((visible - 2 * lineHeight) * fraction).toInt().coerceAtLeast(lineHeight)
+        val maxScroll = max(0, l.height + extendedPaddingTop + extendedPaddingBottom - height)
+        var target = (scrollY + direction * step).coerceIn(0, maxScroll)
+        // 对齐到行首，避免顶端出现半行字
+        if (target in 1 until maxScroll) {
+            target = l.getLineTop(l.getLineForVertical(target))
+        }
+        if (target == scrollY) return
+        browsing = true
+        scrollTo(0, target)
+    }
+
+    // ---------- 笔：上下滑动翻半页，不跟手滚动 ----------
+
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f
+    private var downY = 0f
+    private var swiping = false
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { downX = event.x; downY = event.y; swiping = false }
+            MotionEvent.ACTION_MOVE -> {
+                // 门槛比系统的拖动滚动低：抢在 EditText 自己开始跟手滚动之前接管竖向拖动
+                val dy = abs(event.y - downY)
+                if (!swiping && dy > touchSlop / 2 && dy > abs(event.x - downX)) {
+                    swiping = true
+                    val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                    super.onTouchEvent(cancel)
+                    cancel.recycle()
+                }
+                if (swiping) return true
+            }
+            MotionEvent.ACTION_UP -> if (swiping) {
+                // 向上滑看后面，向下滑看前面；滑得太短视为手抖，不翻页
+                if (abs(event.y - downY) > touchSlop * 3) page(if (event.y < downY) +1 else -1, 0.5f)
+                swiping = false
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
     override fun onScrollChanged(horiz: Int, vert: Int, oldHoriz: Int, oldVert: Int) {
         super.onScrollChanged(horiz, vert, oldHoriz, oldVert)
         if (vert != oldVert) {
-            // 诊断“往上滚一下又回来”：记录是谁触发了滚动
+            // 诊断用：记录是谁触发了滚动
             val by = Throwable().stackTrace.drop(1)
                 .firstOrNull { !it.className.startsWith("android.view.View") && it.methodName != "scrollTo" }
-            android.util.Log.d("momoda", "scroll $oldVert → $vert by ${by?.className?.substringAfterLast('.')}.${by?.methodName}")
+            Log.d("momoda", "scroll $oldVert → $vert by ${by?.className?.substringAfterLast('.')}.${by?.methodName}")
         }
     }
 
+    // ---------- 绘制：常亮光标、标题占位 ----------
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        val l = layout
+        if (l != null) {
+            drawTitleHint(canvas, l)
+            if (isFocused) drawCursor(canvas, l)
+        }
         if (pendingKeyTime != 0L) {
             val ms = SystemClock.uptimeMillis() - pendingKeyTime
             pendingKeyTime = 0L
@@ -170,5 +331,57 @@ class EditorView(context: Context) : EditText(context) {
         }
     }
 
+    private fun drawCursor(canvas: Canvas, l: Layout) {
+        val start = selectionStart
+        if (start < 0 || start != selectionEnd) return
+        val line = l.getLineForOffset(start)
+        val x = compoundPaddingLeft + l.getPrimaryHorizontal(start)
+        val baseline = (extendedPaddingTop + l.getLineBaseline(line)).toFloat()
+        val top = baseline + paint.ascent()
+        val bottom = baseline + paint.descent()
+        val t = text
+        if (blockCursor) {
+            val ch = if (start < t.length && t[start] != '\n') t[start].toString() else null
+            val w = ch?.let { paint.measureText(it) } ?: (textSize * 0.6f)
+            canvas.drawRect(x, top, x + w, bottom, cursorPaint)
+            if (ch != null) {
+                invertedPaint.textSize = textSize
+                canvas.drawText(ch, x, baseline, invertedPaint)
+            }
+        } else {
+            canvas.drawRect(x, top, x + dp(2), bottom, cursorPaint)
+        }
+    }
+
+    /** 首行只有 `# ` 时，在后面画浅灰色的“标题”。 */
+    private fun drawTitleHint(canvas: Canvas, l: Layout) {
+        val t = text
+        val firstLineEnd = t.indexOf('\n').let { if (it < 0) t.length else it }
+        if (t.subSequence(0, firstLineEnd).toString() != "# ") return
+        hintPaint.textSize = textSize
+        val x = compoundPaddingLeft + l.getPrimaryHorizontal(2)
+        val baseline = (extendedPaddingTop + l.getLineBaseline(0)).toFloat()
+        canvas.drawText("标题", x, baseline, hintPaint)
+    }
+
     fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    init {
+        // 放在类的最后：此时所有字段都已初始化
+        ready = true
+    }
+
+    /** 空行（段落之间的分隔）只占半行高，替代整行空白（DESIGN §2.3）。 */
+    private class BlankLineSpacing : LineHeightSpan {
+        override fun chooseHeight(
+            text: CharSequence, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: Paint.FontMetricsInt,
+        ) {
+            if (end - start != 1 || text[start] != '\n') return
+            if (start == 0 || text[start - 1] != '\n') return
+            val half = (fm.descent - fm.ascent) / 2
+            fm.descent = fm.ascent + half
+            fm.bottom = fm.descent
+            fm.top = fm.ascent
+        }
+    }
 }

@@ -79,7 +79,7 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
     private fun setMode(m: Mode) {
         mode = m
         pending = null
-        editor.setBlockCursor(m == Mode.NORMAL)
+        editor.blockCursor = m == Mode.NORMAL
         onModeChange(m)
     }
 

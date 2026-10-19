@@ -1,6 +1,11 @@
 package app.momoda
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Environment
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -8,23 +13,30 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 文档就是一个目录里的 .md 文件。
- * M0 放在 /sdcard/Android/data/app.momoda/files/docs，用来验证 USB 能否直接拷出。
+ * 文档就是一个目录里的 .md 文件（DESIGN §4）。
+ * 有“所有文件访问”权限时放在 Documents/momoda/，卸载 App 也不会丢；
+ * 没有权限时先放在 App 私有目录，保证“即开即打”，授权后自动迁移过去。
  */
-class DocStore(context: Context) {
+class DocStore(private val context: Context) {
 
-    val dir: File = File(context.getExternalFilesDir(null) ?: context.filesDir, "docs").apply { mkdirs() }
-    private val trash = File(dir, ".trash")
     private val prefs = context.getSharedPreferences("docs", Context.MODE_PRIVATE)
+    private val privateDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "docs")
+
+    var dir: File = resolveDir()
+        private set
+
+    val isPublic: Boolean get() = dir == publicDir()
+    private val trash get() = File(dir, ".trash")
 
     fun list(): List<File> =
-        dir.listFiles { f -> f.isFile && f.name.endsWith(".md") }
+        dir.listFiles { f -> f.isFile && f.name.endsWith(".md") && !f.name.startsWith(".") }
             ?.sortedByDescending { it.lastModified() }
             .orEmpty()
 
+    /** 新文档：以日期命名，内容是一个空的一级标题（DESIGN §1）。 */
     fun create(): File {
-        val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.CHINA).format(Date())
-        return File(dir, "$stamp.md").apply { if (!exists()) writeText("") }
+        val name = Titles.uniqueFileName(today()) { File(dir, it).exists() }
+        return File(dir, name).apply { writeText("# ") }
     }
 
     fun read(file: File): String = if (file.exists()) file.readText() else ""
@@ -42,14 +54,57 @@ class DocStore(context: Context) {
         }
     }
 
+    /**
+     * 让文件名跟随标题（离开文档时调用，打字过程中不改）。
+     * 没有标题时保持原名；已经是“标题 2.md”这种带序号的名字时也不再变动。
+     */
+    fun syncNameWithTitle(file: File, text: String): File {
+        val current = file.nameWithoutExtension
+        val desired = Titles.baseNameFor(Titles.titleOf(text), current)
+        if (current == desired || current.matches(Regex(Regex.escape(desired) + " \\d+"))) return file
+        val name = Titles.uniqueFileName(desired) { File(dir, it).exists() }
+        return rename(file, name)
+    }
+
+    fun isEmptyDoc(text: String) = text.isBlank() || text.trim() == "#"
+
+    fun delete(file: File) {
+        file.delete()
+        forget(file)
+    }
+
     fun moveToTrash(file: File) {
         trash.mkdirs()
-        file.renameTo(File(trash, file.name))
+        val name = Titles.uniqueFileName(file.nameWithoutExtension) { File(trash, it).exists() }
+        file.renameTo(File(trash, name))
+        forget(file)
     }
+
+    private fun rename(file: File, newName: String): File {
+        val target = File(dir, newName)
+        if (!file.renameTo(target)) return file
+        val cursor = cursorOf(file)
+        forget(file)
+        if (cursor >= 0) saveCursor(target, cursor)
+        if (lastDocName == file.name) lastDocName = target.name
+        if (previousDocName == file.name) previousDocName = target.name
+        return target
+    }
+
+    private fun forget(file: File) {
+        prefs.edit().remove("cursor:${file.name}").apply()
+    }
+
+    // ---------- 打开记录 ----------
 
     var lastDocName: String?
         get() = prefs.getString("last", null)
         set(v) = prefs.edit().putString("last", v).apply()
+
+    /** Ctrl+Tab 切回的上一篇。 */
+    var previousDocName: String?
+        get() = prefs.getString("previous", null)
+        set(v) = prefs.edit().putString("previous", v).apply()
 
     fun cursorOf(file: File): Int = prefs.getInt("cursor:${file.name}", -1)
 
@@ -59,4 +114,61 @@ class DocStore(context: Context) {
         lastDocName?.let { File(dir, it) }?.takeIf { it.exists() }
             ?: list().firstOrNull()
             ?: create()
+
+    // ---------- 存储位置 ----------
+
+    var askedForAccess: Boolean
+        get() = prefs.getBoolean("askedAccess", false)
+        set(v) = prefs.edit().putBoolean("askedAccess", v).apply()
+
+    private fun resolveDir(): File {
+        if (hasPublicAccess(context)) {
+            val pub = publicDir()
+            if (pub.mkdirs() || pub.isDirectory) return pub
+        }
+        return privateDir.apply { mkdirs() }
+    }
+
+    /**
+     * 回到前台时调用：如果刚拿到权限，就把私有目录里的文档搬到 Documents/momoda。
+     * 返回 true 表示存储位置变了，调用方需要重新打开当前文档。
+     */
+    fun refreshLocation(): Boolean {
+        val target = resolveDir()
+        if (target == dir) return false
+        if (target == publicDir()) migrate(from = privateDir, to = target)
+        dir = target
+        return true
+    }
+
+    /** 逐个复制并校验后再删除原文件；目标里已有同名文件时改名，不覆盖。 */
+    private fun migrate(from: File, to: File) {
+        val files = from.listFiles { f -> f.isFile && f.name.endsWith(".md") && !f.name.startsWith(".") }.orEmpty()
+        for (src in files) {
+            val text = src.readText()
+            if (isEmptyDoc(text)) { src.delete(); continue }
+            val name = Titles.uniqueFileName(src.nameWithoutExtension) { File(to, it).exists() }
+            val dst = File(to, name)
+            FileOutputStream(dst).use { it.write(text.toByteArray()); it.fd.sync() }
+            if (dst.readText() == text) {
+                dst.setLastModified(src.lastModified())
+                val cursor = cursorOf(src)
+                src.delete()
+                if (cursor >= 0) saveCursor(dst, cursor)
+                if (lastDocName == src.name) lastDocName = dst.name
+                if (previousDocName == src.name) previousDocName = dst.name
+                Log.i("momoda", "migrated ${src.name} → ${dst.absolutePath}")
+            }
+        }
+    }
+
+    private fun today() = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
+
+    companion object {
+        fun publicDir() = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "momoda")
+
+        fun hasPublicAccess(context: Context): Boolean =
+            if (Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager()
+            else context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    }
 }

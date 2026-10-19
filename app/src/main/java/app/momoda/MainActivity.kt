@@ -1,12 +1,16 @@
 package app.momoda
 
+import android.Manifest
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -15,35 +19,53 @@ import android.os.Process
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : Activity() {
 
     private lateinit var store: DocStore
     private lateinit var editor: EditorView
-    private lateinit var status: TextView
+    private lateinit var header: LinearLayout
+    private lateinit var headerTitle: TextView
+    private lateinit var headerClock: TextView
+    private lateinit var footer: TextView
     private lateinit var debug: TextView
     private lateinit var menuButton: TextView
     private lateinit var font: Typeface
     private lateinit var vim: Vim
     private lateinit var doc: File
 
+    private val ui by lazy { getSharedPreferences("ui", Context.MODE_PRIVATE) }
     private val handler = Handler(Looper.getMainLooper())
     private val saveRunnable = Runnable { save() }
+    private val footerRunnable = Runnable { refreshChrome() }
+    private val clockRunnable = object : Runnable {
+        override fun run() {
+            refreshClock()
+            val now = Calendar.getInstance()
+            handler.postDelayed(this, (60 - now.get(Calendar.SECOND)) * 1000L + 50)
+        }
+    }
     private var dirty = false
-    private var loading = false
 
     private var zen = false
     private var textSizeSp = 20f
@@ -53,10 +75,11 @@ class MainActivity : Activity() {
     /** Ctrl 组合键按下时被消费的键码，抬起时也要一并消费。 */
     private val consumedDowns = mutableSetOf<Int>()
 
+    private val gray = Color.rgb(0x77, 0x77, 0x77)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = DocStore(this)
-        val ui = getSharedPreferences("ui", Context.MODE_PRIVATE)
         textSizeSp = ui.getFloat("textSize", 20f)
 
         editor = EditorView(this)
@@ -66,24 +89,62 @@ class MainActivity : Activity() {
         editor.setFont(font)
         editor.setTextSizeSp(textSizeSp)
 
-        status = TextView(this).apply {
-            setTextColor(Color.rgb(0x55, 0x55, 0x55))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = font
-            gravity = Gravity.CENTER
-            setPadding(0, editor.dp(6), 0, editor.dp(10))
-            setBackgroundColor(Color.WHITE)
-        }
-        debug = TextView(this).apply {
-            setTextColor(Color.BLACK)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            typeface = Typeface.MONOSPACE
-            setBackgroundColor(Color.WHITE)
-            setPadding(editor.dp(10), editor.dp(8), editor.dp(10), editor.dp(8))
-            visibility = TextView.GONE
-        }
+        buildLayout()
 
-        // 笔/触控入口：右下角的“⋯”常驻（zen 模式下也在），点状态栏也能打开命令面板。
+        vim = Vim(editor) { }
+        vim.enabled = ui.getBoolean("vim", false)
+
+        editor.preImeKeyHandler = ::onKeyPreIme
+        editor.postImeKeyHandler = ::onKeyPostIme
+        editor.onLatency = { if (debug.visibility == View.VISIBLE) refreshDebug() }
+        editor.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                if (!editor.rulesEnabled) return // 正在载入文档
+                dirty = true
+                handler.removeCallbacks(saveRunnable)
+                handler.postDelayed(saveRunnable, 800)
+                // 页脚字数和页眉标题在停止打字 2 秒后才更新，避免每个字都让页眉页脚变化
+                handler.removeCallbacks(footerRunnable)
+                handler.postDelayed(footerRunnable, 2000)
+            }
+        })
+
+        open(store.openLastOrCreate())
+
+        editor.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                editor.viewTreeObserver.removeOnPreDrawListener(this)
+                coldStartMs = SystemClock.uptimeMillis() - Process.getStartUptimeMillis()
+                Log.i("momoda", "coldStart=${coldStartMs}ms font=${fontLoadMs}ms dir=${store.dir}")
+                return true
+            }
+        })
+        editor.requestFocus()
+
+        if (!store.isPublic && !store.askedForAccess) handler.post { askForStorageAccess() }
+    }
+
+    private fun buildLayout() {
+        val dp = { v: Int -> editor.dp(v) }
+        headerTitle = chromeText().apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        headerClock = chromeText()
+        header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(28), dp(14), dp(28), 0)
+            addView(headerTitle, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(headerClock, LinearLayout.LayoutParams(-2, -2))
+        }
+        footer = chromeText().apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, dp(14))
+            setOnClickListener { showPalette() }
+        }
+        // 笔/触控入口：右下角的“⋯”常驻（zen 模式下也在），点页脚也能打开命令面板。
         // 用软键盘或笔的时候没有 Ctrl+K，这是唯一入口。
         menuButton = TextView(this).apply {
             text = "⋯"
@@ -94,69 +155,107 @@ class MainActivity : Activity() {
             isFocusable = false
             setOnClickListener { showPalette() }
         }
-        status.setOnClickListener { showPalette() }
+        debug = TextView(this).apply {
+            setTextColor(Color.BLACK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = Typeface.MONOSPACE
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            visibility = View.GONE
+        }
 
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(header, LinearLayout.LayoutParams(-1, -2))
+            addView(editor, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(footer, LinearLayout.LayoutParams(-1, -2))
+        }
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.WHITE)
-            addView(editor, FrameLayout.LayoutParams(-1, -1).apply { bottomMargin = editor.dp(36) })
-            addView(status, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-            addView(menuButton, FrameLayout.LayoutParams(editor.dp(48), editor.dp(48), Gravity.BOTTOM or Gravity.END))
+            addView(column, FrameLayout.LayoutParams(-1, -1))
+            addView(menuButton, FrameLayout.LayoutParams(dp(56), dp(56), Gravity.BOTTOM or Gravity.END))
             addView(debug, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
-                topMargin = editor.dp(8); rightMargin = editor.dp(8)
+                topMargin = dp(8); rightMargin = dp(8)
             })
         }
         setContentView(root)
+    }
 
-        vim = Vim(editor) { refreshStatus() }
-        vim.enabled = ui.getBoolean("vim", false)
+    private fun chromeText() = TextView(this).apply {
+        setTextColor(gray)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        typeface = font
+        includeFontPadding = false
+    }
 
-        editor.preImeKeyHandler = ::onKeyPreIme
-        editor.postImeKeyHandler = ::onKeyPostIme
-        editor.onSelectionChange = { _, _ -> if (vim.enabled) refreshStatus() }
-        editor.onLatency = { if (debug.visibility == TextView.VISIBLE) refreshDebug() }
-        editor.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-            override fun afterTextChanged(s: Editable?) {
-                if (loading) return
-                dirty = true
-                handler.removeCallbacks(saveRunnable)
-                handler.postDelayed(saveRunnable, 800)
-                refreshStatus()
-            }
-        })
-
-        open(store.openLastOrCreate())
-
-        editor.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
-            override fun onPreDraw(): Boolean {
-                editor.viewTreeObserver.removeOnPreDrawListener(this)
-                coldStartMs = SystemClock.uptimeMillis() - Process.getStartUptimeMillis()
-                Log.i("momoda", "coldStart=${coldStartMs}ms font=${fontLoadMs}ms")
-                return true
-            }
-        })
-        editor.requestFocus()
+    override fun onResume() {
+        super.onResume()
+        hideSystemBars()
+        handler.post(clockRunnable)
+        // 刚从系统设置授权回来：把文档搬到 Documents/momoda，并重新打开
+        if (store.refreshLocation()) {
+            loadDoc(store.openLastOrCreate())
+            toast("文档已移到 ${store.dir.absolutePath.removePrefix("/storage/emulated/0/")}")
+        }
     }
 
     override fun onPause() {
         super.onPause()
+        handler.removeCallbacks(clockRunnable)
         save()
+        // 离开 App 也算“离开文档”：文件名跟上标题
+        doc = store.syncNameWithTitle(doc, editor.text.toString())
+        store.lastDocName = doc.name
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
+    }
+
+    /** 系统状态栏一直隐藏；页眉页脚由 App 自己画（DESIGN §3.1）。 */
+    private fun hideSystemBars() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.insetsController?.let {
+                it.hide(WindowInsets.Type.systemBars())
+                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        }
     }
 
     // ---------- 文档 ----------
 
+    /** 切换到另一篇文档：先“离开”当前文档（保存、改名、清理空文档）。 */
     private fun open(file: File) {
-        if (::doc.isInitialized) save()
+        if (::doc.isInitialized && file != doc) {
+            val left = leaveCurrent()
+            if (left != null) store.previousDocName = left.name
+        }
+        loadDoc(file)
+    }
+
+    private fun loadDoc(file: File) {
         doc = file
         store.lastDocName = file.name
-        loading = true
-        editor.setText(store.read(file))
-        loading = false
+        editor.load(store.read(file))
         dirty = false
         val c = store.cursorOf(file)
         editor.setSelection(if (c in 0..editor.text.length) c else editor.text.length)
-        refreshStatus()
+        refreshChrome()
+    }
+
+    /** 返回离开后的文件；空文档会被删掉，返回 null。 */
+    private fun leaveCurrent(): File? {
+        save()
+        val text = editor.text.toString()
+        if (store.isEmptyDoc(text) && store.list().size > 1) {
+            store.delete(doc)
+            return null
+        }
+        return store.syncNameWithTitle(doc, text)
     }
 
     private fun save() {
@@ -167,16 +266,84 @@ class MainActivity : Activity() {
             dirty = false
         }
         store.saveCursor(doc, editor.selectionStart)
-        refreshStatus()
     }
 
     private fun newDoc() = open(store.create())
 
-    private fun showDocList() {
+    private fun switchToPrevious() {
+        val prev = store.previousDocName?.let { File(store.dir, it) }?.takeIf { it.exists() && it != doc }
+        if (prev == null) { toast("没有上一篇"); return }
+        open(prev)
+    }
+
+    private val dateFmt = SimpleDateFormat("M月d日 HH:mm", Locale.CHINA)
+
+    /** 快速切换（Ctrl+O）：标题 + 修改时间 · 字数，支持拼音首字母搜索。 */
+    private fun showSwitcher() {
+        save()
         val files = store.list()
-        InkList.show(this, "文档（${files.size}）", files.map { it.nameWithoutExtension }, font, ::returnToEditor) { i ->
-            open(files[i])
+        val items = files.map { f ->
+            val text = if (f == doc) editor.text.toString() else store.read(f)
+            val title = Titles.titleOf(text) ?: f.nameWithoutExtension
+            val detail = buildString {
+                append(dateFmt.format(Date(f.lastModified())))
+                append(" · ").append(TextStats.format(TextStats.wordCount(text))).append(" 字")
+                if (f == doc) append(" · 当前")
+            }
+            InkItem(title, detail)
         }
+        InkList.show(this, "文档（${files.size}）", items, font, onDismiss = ::returnToEditor) { i ->
+            if (files[i] != doc) open(files[i])
+        }
+    }
+
+    /** 修改标题：改的是首行，文件名随之更新。 */
+    private fun renameTitle() {
+        val t = editor.text
+        val firstLineEnd = t.indexOf('\n').let { if (it < 0) t.length else it }
+        val firstLine = t.subSequence(0, firstLineEnd).toString()
+        val marker = Regex("^#{1,6}\\s*").find(firstLine)?.value ?: ""
+        InkList.prompt(this, "修改标题", Titles.titleOf(t) ?: "", font, onDismiss = ::returnToEditor) { newTitle ->
+            val prefix = marker.ifEmpty { "# " }.trimEnd() + " "
+            t.replace(0, firstLineEnd, prefix + newTitle.trim())
+            save()
+            doc = store.syncNameWithTitle(doc, editor.text.toString())
+            store.lastDocName = doc.name
+            refreshChrome()
+        }
+    }
+
+    // ---------- 存储权限 ----------
+
+    private fun askForStorageAccess() {
+        store.askedForAccess = true
+        val options = listOf(
+            InkItem("去授权", "推荐：卸载 App 也不会丢文档"),
+            InkItem("暂不", "先存在 App 内部，之后可在命令面板里授权"),
+        )
+        InkList.show(this, "把文档存到 Documents/momoda？", options, font, searchHint = null, onDismiss = ::returnToEditor) { i ->
+            if (i == 0) requestStorageAccess()
+        }
+    }
+
+    private fun requestStorageAccess() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val intents = listOf(
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")),
+                Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+            )
+            for (intent in intents) {
+                try { startActivity(intent); return } catch (e: Exception) { Log.w("momoda", "无法打开 $intent", e) }
+            }
+            toast("这台设备打不开授权页面")
+        } else {
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 1)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (store.refreshLocation()) loadDoc(store.openLastOrCreate())
     }
 
     // ---------- 按键 ----------
@@ -225,9 +392,10 @@ class MainActivity : Activity() {
         val shift = e.isShiftPressed
         return when {
             keyCode == KeyEvent.KEYCODE_N && !shift -> { newDoc(); "新建" }
-            keyCode == KeyEvent.KEYCODE_O && !shift -> { showDocList(); "文档列表" }
+            keyCode == KeyEvent.KEYCODE_O && !shift -> { showSwitcher(); "快速切换" }
+            keyCode == KeyEvent.KEYCODE_TAB -> { switchToPrevious(); "上一篇" }
             keyCode == KeyEvent.KEYCODE_K && !shift -> { showPalette(); "命令面板" }
-            keyCode == KeyEvent.KEYCODE_S && !shift -> { save(); toast("已保存"); "保存" }
+            keyCode == KeyEvent.KEYCODE_S && !shift -> { save(); "保存" }
             keyCode == KeyEvent.KEYCODE_B && !shift -> { wrap("**"); "粗体" }
             keyCode == KeyEvent.KEYCODE_I && !shift -> { wrap("*"); "斜体" }
             keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_3 && !shift -> {
@@ -249,6 +417,7 @@ class MainActivity : Activity() {
     private fun isShortcutKey(keyCode: Int) =
         keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 ||
             keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z ||
+            keyCode == KeyEvent.KEYCODE_TAB ||
             keyCode == KeyEvent.KEYCODE_PERIOD || keyCode == KeyEvent.KEYCODE_COMMA ||
             keyCode == KeyEvent.KEYCODE_EQUALS || keyCode == KeyEvent.KEYCODE_MINUS ||
             keyCode == KeyEvent.KEYCODE_PLUS || keyCode == KeyEvent.KEYCODE_SLASH
@@ -259,26 +428,39 @@ class MainActivity : Activity() {
         return KeyEvent(e.downTime, e.eventTime, e.action, e.keyCode, e.repeatCount, meta)
     }
 
-    // ---------- 命令 ----------
+    // ---------- 命令面板 ----------
 
+    private class Command(val id: String, val label: String, val shortcut: String = "", val run: () -> Unit)
+
+    private fun commands(): List<Command> = buildList {
+        add(Command("new", "新建文档", "Ctrl+N", ::newDoc))
+        add(Command("switch", "打开文档", "Ctrl+O", ::showSwitcher))
+        add(Command("previous", "切回上一篇", "Ctrl+Tab", ::switchToPrevious))
+        add(Command("rename", "修改标题", "", ::renameTitle))
+        add(Command("zen", "Zen 模式", "Ctrl+.", ::toggleZen))
+        add(Command("bigger", "字号放大", "Ctrl+=") { changeTextSize(+1f) })
+        add(Command("smaller", "字号缩小", "Ctrl+-") { changeTextSize(-1f) })
+        add(Command("vim", "Vim 模式开关", "Ctrl+Shift+V", ::toggleVim))
+        add(Command("trash", "删除当前文档", "进回收站", ::deleteDoc))
+        if (!store.isPublic) add(Command("access", "授权：把文档存到 Documents/momoda", "", ::requestStorageAccess))
+        add(Command("debug", "调试面板", "Ctrl+Shift+D", ::toggleDebug))
+        add(Command("about", "系统设置 · 关于本机", "连点版本号开启开发者选项") {
+            openSystemSettings(Settings.ACTION_DEVICE_INFO_SETTINGS, "Settings\$MyDeviceInfoActivity")
+        })
+        add(Command("devopts", "系统设置 · 开发者选项") {
+            openSystemSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, "Settings\$DevelopmentSettingsDashboardActivity")
+        })
+    }
+
+    /** 命令面板：最近用过的排在前面（DESIGN §3.2）。 */
     private fun showPalette() {
-        val cmds = listOf<Pair<String, () -> Unit>>(
-            "新建文档　Ctrl+N" to ::newDoc,
-            "打开文档　Ctrl+O" to ::showDocList,
-            "Zen 模式　Ctrl+." to ::toggleZen,
-            "字号放大　Ctrl+=" to { changeTextSize(+1f) },
-            "字号缩小　Ctrl+-" to { changeTextSize(-1f) },
-            "Vim 模式开关　Ctrl+Shift+V" to ::toggleVim,
-            "调试面板　Ctrl+Shift+D" to ::toggleDebug,
-            "删除当前文档（进回收站）" to ::deleteDoc,
-            "系统设置 · 关于本机（连点版本号开启开发者选项）" to {
-                openSystemSettings(Settings.ACTION_DEVICE_INFO_SETTINGS, "Settings\$MyDeviceInfoActivity")
-            },
-            "系统设置 · 开发者选项" to {
-                openSystemSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, "Settings\$DevelopmentSettingsDashboardActivity")
-            },
-        )
-        InkList.show(this, "命令", cmds.map { it.first }, font, ::returnToEditor) { i -> cmds[i].second() }
+        val recent = ui.getString("recentCommands", "")!!.split(',').filter { it.isNotEmpty() }
+        val cmds = commands().sortedBy { c -> recent.indexOf(c.id).let { if (it < 0) Int.MAX_VALUE else it } }
+        InkList.show(this, "命令", cmds.map { InkItem(it.label, it.shortcut) }, font, onDismiss = ::returnToEditor) { i ->
+            val c = cmds[i]
+            ui.edit().putString("recentCommands", (listOf(c.id) + recent.filter { it != c.id }).take(8).joinToString(",")).apply()
+            c.run()
+        }
     }
 
     /** 有些墨水屏厂商的定制设置里藏掉了这些页面，直接拉起系统原生设置。 */
@@ -309,10 +491,11 @@ class MainActivity : Activity() {
 
     private fun deleteDoc() {
         val victim = doc
+        val title = Titles.titleOf(editor.text) ?: victim.nameWithoutExtension
         dirty = false
         store.moveToTrash(victim)
-        open(store.list().firstOrNull() ?: store.create())
-        toast("已移到回收站：${victim.nameWithoutExtension}")
+        loadDoc(store.list().firstOrNull() ?: store.create())
+        toast("已移到回收站：$title")
     }
 
     private fun wrap(marker: String) {
@@ -334,57 +517,58 @@ class MainActivity : Activity() {
 
     private fun toggleZen() {
         zen = !zen
-        status.visibility = if (zen) TextView.GONE else TextView.VISIBLE
-        (editor.layoutParams as FrameLayout.LayoutParams).bottomMargin = if (zen) 0 else editor.dp(36)
-        editor.requestLayout()
-        if (Build.VERSION.SDK_INT >= 30) {
-            window.insetsController?.let {
-                if (zen) {
-                    it.hide(WindowInsets.Type.systemBars())
-                    it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                } else {
-                    it.show(WindowInsets.Type.systemBars())
-                }
-            }
-        }
+        val v = if (zen) View.GONE else View.VISIBLE
+        header.visibility = v
+        footer.visibility = v
     }
 
     private fun changeTextSize(delta: Float) {
         textSizeSp = (textSizeSp + delta).coerceIn(14f, 36f)
         editor.setTextSizeSp(textSizeSp)
-        getSharedPreferences("ui", Context.MODE_PRIVATE).edit().putFloat("textSize", textSizeSp).apply()
-        refreshStatus()
+        ui.edit().putFloat("textSize", textSizeSp).apply()
     }
 
     private fun toggleVim() {
         vim.enabled = !vim.enabled
-        getSharedPreferences("ui", Context.MODE_PRIVATE).edit().putBoolean("vim", vim.enabled).apply()
-        toast(if (vim.enabled) "Vim 模式：开（Esc 进入 normal）" else "Vim 模式：关")
+        ui.edit().putBoolean("vim", vim.enabled).apply()
+        toast(if (vim.enabled) "Vim 模式：开（Esc 进入 normal，光标变成方块）" else "Vim 模式：关")
     }
 
     private fun toggleDebug() {
-        debug.visibility = if (debug.visibility == TextView.VISIBLE) TextView.GONE else TextView.VISIBLE
+        debug.visibility = if (debug.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         refreshDebug()
     }
 
-    // ---------- 状态 ----------
+    // ---------- 页眉页脚 ----------
 
-    private fun refreshStatus() {
-        val parts = mutableListOf("${TextStats.format(TextStats.wordCount(editor.text))} 字")
-        if (vim.enabled) parts += if (vim.mode == Vim.Mode.NORMAL) "NORMAL" else "INSERT"
-        parts += if (dirty) "编辑中" else "已保存"
-        status.text = parts.joinToString(" · ")
+    /** 页眉：标题；页脚：字数 · 保存状态。 */
+    private fun refreshChrome() {
+        headerTitle.text = Titles.titleOf(editor.text) ?: "未命名"
+        val words = TextStats.format(TextStats.wordCount(editor.text))
+        val where = if (store.isPublic) "" else " · 未授权存储"
+        footer.text = "$words 字 · ${if (dirty) "保存中" else "已保存"}$where"
+    }
+
+    /** 页眉右侧：时间，电量低于 20% 时附带电量。按分钟更新。 */
+    private fun refreshClock() {
+        val time = SimpleDateFormat("HH:mm", Locale.CHINA).format(Date())
+        val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = battery?.let {
+            val l = it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val s = it.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            if (l >= 0 && s > 0) l * 100 / s else null
+        }
+        headerClock.text = if (level != null && level < 20) "电量 $level%　$time" else time
     }
 
     private fun refreshDebug() {
-        if (debug.visibility != TextView.VISIBLE) return
+        if (debug.visibility != View.VISIBLE) return
         val ime = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
             ?.substringBefore('/') ?: "?"
         val hardKb = resources.configuration.keyboard == Configuration.KEYBOARD_QWERTY
-        val composing = android.view.inputmethod.BaseInputConnection.getComposingSpanStart(editor.text) >= 0
         debug.text = buildString {
             appendLine("输入法  $ime")
-            appendLine("实体键盘 ${if (hardKb) "是" else "否"}　拼写中 ${if (composing) "是" else "否"}")
+            appendLine("实体键盘 ${if (hardKb) "是" else "否"}　vim ${if (vim.enabled) vim.mode else "关"}")
             appendLine("冷启动 ${coldStartMs}ms　字体加载 ${fontLoadMs}ms")
             appendLine("按键→重绘 ${editor.lastLatencyMs}ms（均值 ${"%.0f".format(editor.avgLatencyMs)}ms）")
             appendLine("文件 ${doc.absolutePath}")
