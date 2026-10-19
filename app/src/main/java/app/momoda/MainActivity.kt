@@ -88,6 +88,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val tStart = SystemClock.uptimeMillis()
+        Diagnostics.install(this) {
+            // 崩溃前尽量把正在写的内容存下来
+            if (::doc.isInitialized && dirty) store.write(doc, editor.text.toString())
+        }
         if (BuildConfig.DEBUG) intent.getStringExtra("updateApi")?.let {
             getSharedPreferences("ui", Context.MODE_PRIVATE).edit().putString("updateApiOverride", it).apply()
             getSharedPreferences("updates", Context.MODE_PRIVATE).edit().clear().apply()
@@ -136,6 +140,7 @@ class MainActivity : Activity() {
                 handler.postDelayed({ Pinyin.warmUp(assets) }, 300)
                 // 检查更新同样推迟，而且每天最多联网一次
                 handler.postDelayed({ checkForUpdates(force = false) }, 3000)
+                Thread { Diagnostics.recordExitReasons(this@MainActivity) }.start()
                 return true
             }
         })
@@ -526,6 +531,7 @@ class MainActivity : Activity() {
         if (!store.isPublic) add(Command("access", "授权：把文档存到 Documents/momoda", "", ::requestStorageAccess))
         updates.latest?.let { r -> add(Command("install-update", "安装新版本 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
         add(Command("check-update", "检查更新", if (updates.configured) "" else "尚未配置发布地址") { checkForUpdates(force = true) })
+        add(Command("diagnostics", "导出诊断信息", "崩溃记录等，不含文档内容", ::exportDiagnostics))
         add(Command("debug", "调试面板", "Ctrl+Shift+D", ::toggleDebug))
         add(Command("about", "系统设置 · 关于本机", "连点版本号开启开发者选项") {
             openSystemSettings(Settings.ACTION_DEVICE_INFO_SETTINGS, "Settings\$MyDeviceInfoActivity")
@@ -666,6 +672,16 @@ class MainActivity : Activity() {
         0.5f -> "1/2 行"
         0.75f -> "3/4 行"
         else -> "1 行"
+    }
+
+    private fun exportDiagnostics() {
+        val desc = with(settings) {
+            "字体=${font.ifEmpty { "内置" }} 字号=$textSize 行距=$lineSpacing 段距=$paragraphSpacing 版心=$charsPerLine " +
+                "缩进=$indent 页眉页脚=$chrome 专注=$focus vim=$vim 自动更新=$autoUpdate 存储=${if (store.isPublic) "Documents" else "私有目录"}"
+        }
+        runCatching { Diagnostics.export(this, store.dir, desc) }
+            .onSuccess { toast("已导出：${it.absolutePath.removePrefix("/storage/emulated/0/")}") }
+            .onFailure { toast("导出失败：${it.message}") }
     }
 
     // ---------- 更新 ----------
