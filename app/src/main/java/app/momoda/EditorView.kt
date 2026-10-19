@@ -94,11 +94,21 @@ class EditorView(context: Context) : EditText(context) {
         invertedPaint.typeface = typeface
         hintPaint.typeface = typeface
         updatePadding()
+        restyleAll()
     }
 
     fun setTextSizeSp(sp: Float) {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
         updatePadding()
+        // 列表的悬挂缩进宽度按字号算，字号变了要重算
+        restyleAll()
+    }
+
+    private val styler = MarkdownStyler(resources.displayMetrics.density) { paint.measureText(it.toString()) }
+
+    private fun restyleAll() {
+        val t = text ?: return
+        styler.restyleAll(t)
     }
 
     /** 载入整篇文档：不触发分段规则，并挂上段距样式。 */
@@ -107,6 +117,7 @@ class EditorView(context: Context) : EditText(context) {
         setText(content)
         rulesEnabled = true
         attachSpacing()
+        restyleAll()
     }
 
     private fun attachSpacing() {
@@ -137,6 +148,9 @@ class EditorView(context: Context) : EditText(context) {
         private var deletedNewlineAt = -1
         private var insertedNewlineAt = -1
         private var applying = false
+        // 本次编辑（含分段规则补充的编辑）影响到的范围，用来只重新渲染这几行
+        private var dirtyFrom = Int.MAX_VALUE
+        private var dirtyTo = -1
 
         override fun beforeTextChanged(s: CharSequence, start: Int, count: Int, after: Int) {
             deletedNewlineAt = if (count == 1 && after == 0 && s[start] == '\n') start else -1
@@ -144,23 +158,34 @@ class EditorView(context: Context) : EditText(context) {
 
         override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {
             insertedNewlineAt = if (before == 0 && count == 1 && s[start] == '\n') start else -1
+            dirtyFrom = minOf(dirtyFrom, start)
+            dirtyTo = maxOf(dirtyTo, start + count)
         }
 
         override fun afterTextChanged(s: Editable) {
             browsing = false
             stripForeignStyles(s)
-            if (applying || !rulesEnabled) return
+            if (applying) return
+            if (!rulesEnabled) { dirtyFrom = Int.MAX_VALUE; dirtyTo = -1; return }
             val soft = softBreakPending
             softBreakPending = false
             val edit = when {
                 insertedNewlineAt >= 0 -> EditRules.afterNewline(s, insertedNewlineAt, soft)
                 deletedNewlineAt >= 0 -> EditRules.afterNewlineDeleted(s, deletedNewlineAt)
                 else -> null
-            } ?: return
-            applying = true
-            s.replace(edit.start, edit.end, edit.text)
-            setSelection(edit.cursor.coerceIn(0, s.length))
-            applying = false
+            }
+            if (edit != null) {
+                applying = true
+                s.replace(edit.start, edit.end, edit.text)
+                setSelection(edit.cursor.coerceIn(0, s.length))
+                applying = false
+            }
+            if (dirtyTo >= 0) {
+                // 往前多带一个字符：删掉换行后，上一行和这一行合成了一行
+                styler.restyle(s, (dirtyFrom - 1).coerceAtLeast(0), (dirtyTo + 1).coerceAtMost(s.length))
+            }
+            dirtyFrom = Int.MAX_VALUE
+            dirtyTo = -1
         }
     }
 
@@ -169,11 +194,12 @@ class EditorView(context: Context) : EditText(context) {
     }
 
     /**
-     * 纯文本编辑器：输入法上屏的文字有时带着斜体、下划线等样式（fcitx5 英文模式下观察到斜体），
-     * 这里全部去掉，只保留输入法正在拼写的标记（SPAN_COMPOSING）和我们自己的段距样式。
+     * 纯文本编辑器：粘贴或输入法上屏的文字可能带着别处的样式，全部去掉；
+     * 只保留输入法正在拼写的标记（SPAN_COMPOSING）和我们自己的 Markdown 样式（[MdSpan]）。
      */
     private fun stripForeignStyles(s: Editable) {
         for (span in s.getSpans(0, s.length, CharacterStyle::class.java)) {
+            if (span is MdSpan) continue
             if (s.getSpanFlags(span) and Spanned.SPAN_COMPOSING != 0) continue
             s.removeSpan(span)
         }
