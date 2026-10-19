@@ -24,7 +24,8 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
         private set
 
     private var pending: Char? = null
-    private val words = BreakIterator.getWordInstance(Locale.CHINA)
+    // ICU 的中文分词要加载词典，第一次创建可能很慢：等第一次按 w/b 时再创建
+    private val words by lazy { BreakIterator.getWordInstance(Locale.CHINA) }
     private val imm = editor.context.getSystemService(InputMethodManager::class.java)
 
     /** 返回 true 表示按键已被消费，不再交给输入法和编辑器。 */

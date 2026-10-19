@@ -406,8 +406,8 @@ class EditorView(context: Context) : EditText(context) {
 
     override fun onScrollChanged(horiz: Int, vert: Int, oldHoriz: Int, oldVert: Int) {
         super.onScrollChanged(horiz, vert, oldHoriz, oldVert)
-        if (vert != oldVert) {
-            // 诊断用：记录是谁触发了滚动
+        if (BuildConfig.DEBUG && vert != oldVert) {
+            // 诊断用（只在 debug 包里）：记录是谁触发了滚动
             val by = Throwable().stackTrace.drop(1)
                 .firstOrNull { !it.className.startsWith("android.view.View") && it.methodName != "scrollTo" }
             Log.d("momoda", "scroll $oldVert → $vert by ${by?.className?.substringAfterLast('.')}.${by?.methodName}")
