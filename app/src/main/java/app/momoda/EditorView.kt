@@ -118,6 +118,21 @@ class EditorView(context: Context) : EditText(context) {
     private val pageCheck = Runnable { keepCursorOnPage() }
 
     /**
+     * 关掉 TextView 自带的“让光标可见”滚动，由 [keepCursorOnPage] 独自负责。
+     * 两者并存时会拉锯：TextView 不允许滚过文末，每次上屏都把翻半页推上去的位置拉回来，
+     * 表现为“上面的文字往上闪一下又回来”。
+     */
+    override fun bringPointIntoView(offset: Int): Boolean {
+        post(pageCheck)
+        return false
+    }
+
+    override fun bringPointIntoView(offset: Int, requestRectWithoutFocus: Boolean): Boolean {
+        post(pageCheck)
+        return false
+    }
+
+    /**
      * 翻半页：光标快到可写区域底部时，一次把它所在行推到屏幕上部 1/4 处。
      * 不做逐行滚动——墨水屏上每滚一行都是一次整屏刷新。
      */
@@ -131,6 +146,16 @@ class EditorView(context: Context) : EditText(context) {
         val tooHigh = top < scrollY + extendedPaddingTop
         if (tooLow || tooHigh) {
             scrollTo(0, max(0, top - height / 4))
+        }
+    }
+
+    override fun onScrollChanged(horiz: Int, vert: Int, oldHoriz: Int, oldVert: Int) {
+        super.onScrollChanged(horiz, vert, oldHoriz, oldVert)
+        if (vert != oldVert) {
+            // 诊断“往上滚一下又回来”：记录是谁触发了滚动
+            val by = Throwable().stackTrace.drop(1)
+                .firstOrNull { !it.className.startsWith("android.view.View") && it.methodName != "scrollTo" }
+            android.util.Log.d("momoda", "scroll $oldVert → $vert by ${by?.className?.substringAfterLast('.')}.${by?.methodName}")
         }
     }
 
