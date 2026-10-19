@@ -79,7 +79,9 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val tStart = SystemClock.uptimeMillis()
         store = DocStore(this)
+        val tStore = SystemClock.uptimeMillis()
         textSizeSp = ui.getFloat("textSize", 20f)
 
         editor = EditorView(this)
@@ -111,13 +113,18 @@ class MainActivity : Activity() {
             }
         })
 
+        val tViews = SystemClock.uptimeMillis()
         open(store.openLastOrCreate())
+        val tOpen = SystemClock.uptimeMillis()
+        Log.i("momoda", "startup: sinceProcess=${tStart - Process.getStartUptimeMillis()}ms store=${tStore - tStart}ms views=${tViews - tStore}ms open=${tOpen - tViews}ms")
 
         editor.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
                 editor.viewTreeObserver.removeOnPreDrawListener(this)
                 coldStartMs = SystemClock.uptimeMillis() - Process.getStartUptimeMillis()
                 Log.i("momoda", "coldStart=${coldStartMs}ms font=${fontLoadMs}ms dir=${store.dir}")
+                // 拼音表只给搜索用，等第一帧画完再在后台读，不和冷启动抢 CPU
+                handler.postDelayed({ Pinyin.warmUp(assets) }, 300)
                 return true
             }
         })

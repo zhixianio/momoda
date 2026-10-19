@@ -19,6 +19,8 @@ android {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            // 正式发布前改成自己的发布密钥；现在先用 debug 密钥，方便在真机上直接覆盖安装测试性能
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
