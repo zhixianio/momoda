@@ -4,6 +4,10 @@
 
 > 当前阶段：**M0 验证原型**。设计见 [DESIGN.md](DESIGN.md)，验证进度见 [docs/M0.md](docs/M0.md)。
 
+## 推荐输入法
+
+[fcitx5-android](https://github.com/fcitx5-android/fcitx5-android)（小企鹅输入法）：开源，实体键盘支持好，支持小鹤等双拼方案。
+
 ## 开发
 
 ```bash
