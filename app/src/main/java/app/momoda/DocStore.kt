@@ -39,7 +39,30 @@ class DocStore(private val context: Context) {
         return File(dir, name).apply { writeText("# ") }
     }
 
-    fun read(file: File): String = if (file.exists()) file.readText() else ""
+    fun read(file: File): String {
+        if (!file.exists()) return ""
+        val text = file.readText()
+        knownMtime[file.absolutePath] = file.lastModified()
+        return text
+    }
+
+    /** 我们最后一次读或写某个文件时它的修改时间，用来发现“被其他程序改过”。 */
+    private val knownMtime = HashMap<String, Long>()
+
+    /** 文件在我们上次读写之后被别的程序改过（或删掉了）。 */
+    fun changedOnDisk(file: File): Boolean {
+        val known = knownMtime[file.absolutePath] ?: return false
+        return !file.exists() || file.lastModified() != known
+    }
+
+    /** 冲突时把我们的版本另存为“标题 冲突 1020-0815.md”，不动对方的版本。 */
+    fun saveConflictCopy(file: File, text: String): File {
+        val stamp = SimpleDateFormat("MMdd-HHmm", Locale.CHINA).format(Date())
+        val name = Titles.uniqueFileName("${file.nameWithoutExtension} 冲突 $stamp") { File(dir, it).exists() }
+        val copy = File(dir, name)
+        write(copy, text)
+        return copy
+    }
 
     /** 先写临时文件再 rename，并 fsync，断电也不会留下半个文件。 */
     fun write(file: File, text: String) {
@@ -52,6 +75,7 @@ class DocStore(private val context: Context) {
             file.writeText(text)
             tmp.delete()
         }
+        knownMtime[file.absolutePath] = file.lastModified()
     }
 
     /**
@@ -107,6 +131,7 @@ class DocStore(private val context: Context) {
     private fun rename(file: File, newName: String): File {
         val target = File(dir, newName)
         if (!file.renameTo(target)) return file
+        knownMtime.remove(file.absolutePath)?.let { knownMtime[target.absolutePath] = target.lastModified() }
         val cursor = cursorOf(file)
         forget(file)
         if (cursor >= 0) saveCursor(target, cursor)

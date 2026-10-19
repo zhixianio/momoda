@@ -74,6 +74,8 @@ class MainActivity : Activity() {
         }
     }
     private var dirty = false
+    /** 最近一次保存失败的原因；保存成功后清空。页脚会一直提示，直到保存成功。 */
+    private var saveError: String? = null
 
     private var fontLoadMs = 0L
     private var coldStartMs = -1L
@@ -212,6 +214,9 @@ class MainActivity : Activity() {
         if (store.refreshLocation()) {
             loadDoc(store.openLastOrCreate())
             toast("文档已移到 ${store.dir.absolutePath.removePrefix("/storage/emulated/0/")}")
+        } else if (::doc.isInitialized && !dirty && store.changedOnDisk(doc)) {
+            // 离开期间文档被别的程序改过，而我们没有未保存的修改：直接载入新版本
+            if (doc.exists()) loadDoc(doc) else loadDoc(store.openLastOrCreate())
         }
     }
 
@@ -278,8 +283,28 @@ class MainActivity : Activity() {
         handler.removeCallbacks(saveRunnable)
         if (!::doc.isInitialized) return
         if (dirty) {
-            store.write(doc, editor.text.toString())
-            dirty = false
+            val text = editor.text.toString()
+            try {
+                if (store.changedOnDisk(doc)) {
+                    // 文档被别的程序改过（例如通过 USB 拷进了新版本）：不覆盖对方，把我们的版本另存一份
+                    val copy = store.saveConflictCopy(doc, text)
+                    toast("《${doc.nameWithoutExtension}》被其他程序修改过，你的版本另存为《${copy.nameWithoutExtension}》")
+                    doc = copy
+                    store.lastDocName = copy.name
+                } else {
+                    store.write(doc, text)
+                }
+                dirty = false
+                if (saveError != null) { saveError = null; refreshChrome() }
+            } catch (e: Exception) {
+                Log.e("momoda", "保存失败 ${doc.absolutePath}", e)
+                val first = saveError == null
+                saveError = e.message ?: e.javaClass.simpleName
+                refreshChrome()
+                if (first) toast("保存失败：$saveError")
+                // 稍后自动重试；dirty 保持为 true
+                handler.postDelayed(saveRunnable, 5000)
+            }
         }
         store.saveCursor(doc, editor.selectionStart)
     }
@@ -692,7 +717,12 @@ class MainActivity : Activity() {
         val words = TextStats.format(TextStats.wordCount(editor.text))
         val where = if (store.isPublic) "" else " · 未授权存储"
         val update = updates.latest?.let { " · 有新版本 ${it.version}" } ?: ""
-        footer.text = "$words 字 · ${if (dirty) "保存中" else "已保存"}$where$update"
+        val state = when {
+            saveError != null -> "保存失败，正在重试"
+            dirty -> "保存中"
+            else -> "已保存"
+        }
+        footer.text = "$words 字 · $state$where$update"
     }
 
     /** 页眉右侧：时间，电量低于 20% 时附带电量。按分钟更新。 */
