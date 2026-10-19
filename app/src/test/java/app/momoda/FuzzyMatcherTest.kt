@@ -10,7 +10,8 @@ class FuzzyMatcherTest {
         '新' to "xin", '建' to "jian", '文' to "wen", '档' to "dang",
         '打' to "da", '开' to "kai", '模' to "mo", '式' to "shi", '字' to "zi", '号' to "hao",
     )
-    private val m = FuzzyMatcher { py[it] }
+    private val alt = mapOf('长' to listOf("zhang", "chang"), '重' to listOf("zhong", "chong"), '要' to listOf("yao"))
+    private val m = FuzzyMatcher { alt[it] ?: py[it]?.let(::listOf) }
 
     @Test fun initials() = assertEquals(2, m.score("xj", "新建文档"))
 
@@ -31,4 +32,13 @@ class FuzzyMatcherTest {
         assertEquals(listOf("新建文档"), m.filter("xj", items) { it })
         assertEquals(items, m.filter("", items) { it })
     }
+
+    @Test fun polyphonicInitialsEitherReading() {
+        assertEquals(2, m.score("cw", "长文"))
+        assertEquals(2, m.score("zw", "长文"))
+    }
+
+    @Test fun polyphonicFullPinyin() = assertEquals(4, m.score("changw", "长文"))
+
+    @Test fun polyphonicSecondChar() = assertEquals(3, m.score("cy", "很重要"))
 }

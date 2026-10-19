@@ -9,6 +9,8 @@ import android.graphics.text.LineBreakConfig
 import android.os.Build
 import android.os.SystemClock
 import android.text.Editable
+import android.text.SpannableStringBuilder
+import android.view.inputmethod.BaseInputConnection
 import android.text.InputType
 import android.text.Layout
 import android.text.Spanned
@@ -119,18 +121,39 @@ class EditorView(context: Context) : EditText(context) {
         get() = styler.indent
         set(v) { styler.indent = v; restyleAll() }
 
+    /**
+     * 整篇重新渲染（字号、字体、缩进变化时）。不能直接在编辑器的文字上逐个改样式：
+     * 每改一个 Span 都会触发一次重新排版，长文档会卡死主线程（4 万字实测卡了 25 秒）。
+     * 所以先在一份脱离编辑器的副本上改好，再一次性放回去，并保持光标和翻页位置。
+     */
     private fun restyleAll() {
         val t = text ?: return
-        styler.restyleAll(t)
+        if (t.isEmpty()) return
+        val selStart = selectionStart
+        val selEnd = selectionEnd
+        val y = scrollY
+        val copy = SpannableStringBuilder(t)
+        BaseInputConnection.removeComposingSpans(copy)
+        styler.restyleAll(copy)
+        setStyledText(copy)
+        setSelection(selStart.coerceIn(0, copy.length), selEnd.coerceIn(0, copy.length))
+        scrollTo(0, y)
     }
 
-    /** 载入整篇文档：不触发分段规则，并挂上段距样式。 */
+    /** 载入整篇文档：先在副本上渲染好 Markdown 和段距，再一次性交给编辑器（原因见 [restyleAll]）。 */
     fun load(content: String) {
+        val styled = SpannableStringBuilder(content)
+        styler.restyleAll(styled)
+        setStyledText(styled)
+    }
+
+    private fun setStyledText(styled: SpannableStringBuilder) {
+        styled.removeSpan(spacing)
+        styled.removeSpan(focusSpan)
+        styled.setSpan(spacing, 0, styled.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
         rulesEnabled = false
-        setText(content)
+        setText(styled)
         rulesEnabled = true
-        attachSpacing()
-        restyleAll()
         focusShown = false
         updateFocus()
     }
@@ -179,7 +202,7 @@ class EditorView(context: Context) : EditText(context) {
 
         override fun afterTextChanged(s: Editable) {
             browsing = false
-            stripForeignStyles(s)
+            if (dirtyTo >= 0) stripForeignStyles(s, dirtyFrom.coerceIn(0, s.length), dirtyTo.coerceIn(0, s.length))
             if (applying) return
             if (!rulesEnabled) { dirtyFrom = Int.MAX_VALUE; dirtyTo = -1; return }
             val soft = softBreakPending
@@ -212,8 +235,9 @@ class EditorView(context: Context) : EditText(context) {
      * 纯文本编辑器：粘贴或输入法上屏的文字可能带着别处的样式，全部去掉；
      * 只保留输入法正在拼写的标记（SPAN_COMPOSING）和我们自己的 Markdown 样式（[MdSpan]）。
      */
-    private fun stripForeignStyles(s: Editable) {
-        for (span in s.getSpans(0, s.length, CharacterStyle::class.java)) {
+    private fun stripForeignStyles(s: Editable, from: Int, to: Int) {
+        // 只看刚变动的范围：整篇扫描在长文档里每个按键都要分配几千个对象
+        for (span in s.getSpans(from, to, CharacterStyle::class.java)) {
             if (span is MdSpan || span is FocusSpan) continue
             if (s.getSpanFlags(span) and Spanned.SPAN_COMPOSING != 0) continue
             s.removeSpan(span)
