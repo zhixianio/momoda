@@ -31,4 +31,18 @@ class TitlesTest {
         assertEquals("随笔 3.md", Titles.uniqueFileName("随笔") { it in taken })
         assertEquals("新.md", Titles.uniqueFileName("新") { it in taken })
     }
+
+    @Test fun withTitleKeepsHeadingLevel() = assertEquals("## 新标题\n\n正文", Titles.withTitle("## 旧\n\n正文", "新标题"))
+
+    @Test fun withTitleOnPlainFirstLine() = assertEquals("# 新\n正文", Titles.withTitle("旧的第一行\n正文", "新"))
+
+    @Test fun withTitleOnEmptyDoc() = assertEquals("# 新", Titles.withTitle("", "新"))
+
+    @Test fun excerptSkipsTitleAndMarkers() =
+        assertEquals("第一段 苹果 引用", Titles.excerptOf("# 标题\n\n第一段\n\n- **苹果**\n\n> 引用"))
+
+    @Test fun excerptIsCut() = assertEquals("字".repeat(5) + "…", Titles.excerptOf("# t\n" + "字".repeat(9), 5))
+
+    @Test fun excerptKeepsLiteralAsterisksAndUnderscores() =
+        assertEquals("3 * 4 snake_case 粗", Titles.excerptOf("# t\n3 * 4 snake_case **粗**"))
 }

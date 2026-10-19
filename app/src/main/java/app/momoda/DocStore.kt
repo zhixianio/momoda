@@ -80,6 +80,30 @@ class DocStore(private val context: Context) {
         forget(file)
     }
 
+    // ---------- 回收站 ----------
+
+    fun trashList(): List<File> =
+        trash.listFiles { f -> f.isFile && f.name.endsWith(".md") }?.sortedByDescending { it.lastModified() }.orEmpty()
+
+    /** 从回收站恢复；原名被占用时自动加序号。 */
+    fun restore(file: File): File {
+        val name = Titles.uniqueFileName(file.nameWithoutExtension) { File(dir, it).exists() }
+        val target = File(dir, name)
+        return if (file.renameTo(target)) target else file
+    }
+
+    /** 从回收站彻底删除。 */
+    fun purge(file: File) {
+        if (file.parentFile == trash) file.delete()
+    }
+
+    /** 修改某篇文档的标题（改首行），文件名随之更新。 */
+    fun retitle(file: File, newTitle: String): File {
+        val text = read(file)
+        write(file, Titles.withTitle(text, newTitle))
+        return syncNameWithTitle(file, read(file))
+    }
+
     private fun rename(file: File, newName: String): File {
         val target = File(dir, newName)
         if (!file.renameTo(target)) return file

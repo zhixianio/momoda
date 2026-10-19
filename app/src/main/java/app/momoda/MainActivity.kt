@@ -317,6 +317,41 @@ class MainActivity : Activity() {
         }
     }
 
+    /** 全屏文档管理页（含回收站）。 */
+    private fun showManager() {
+        save()
+        DocManagerPanel(this, store, font, current = { doc }, actions = object : DocManagerPanel.Actions {
+            override fun open(file: File) { if (file != doc) this@MainActivity.open(file) }
+
+            override fun retitle(file: File, onDone: () -> Unit) {
+                val text = if (file == doc) editor.text.toString() else store.read(file)
+                InkList.prompt(this@MainActivity, "修改标题", Titles.titleOf(text) ?: "", font) { newTitle ->
+                    if (file == doc) {
+                        editor.text.replace(0, editor.text.length, Titles.withTitle(editor.text.toString(), newTitle))
+                        save()
+                        doc = store.syncNameWithTitle(doc, editor.text.toString())
+                        store.lastDocName = doc.name
+                        refreshChrome()
+                    } else {
+                        store.retitle(file, newTitle)
+                    }
+                    onDone()
+                }
+            }
+
+            override fun changed() {
+                // 当前文档被移进回收站：不要再往原路径保存，换一篇显示
+                if (!doc.exists()) {
+                    dirty = false
+                    handler.removeCallbacks(saveRunnable)
+                    loadDoc(store.list().firstOrNull() ?: store.create())
+                }
+            }
+
+            override fun dismissed() = returnToEditor()
+        }).show()
+    }
+
     // ---------- 存储权限 ----------
 
     private fun askForStorageAccess() {
@@ -443,6 +478,7 @@ class MainActivity : Activity() {
         add(Command("switch", "打开文档", "Ctrl+O", ::showSwitcher))
         add(Command("previous", "切回上一篇", "Ctrl+Tab", ::switchToPrevious))
         add(Command("rename", "修改标题", "", ::renameTitle))
+        add(Command("manage", "管理文档", "回收站、排序、批量查看", ::showManager))
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
         add(Command("zen", "Zen 模式", "Ctrl+.", ::toggleZen))
         add(Command("focus", "专注模式开关", "Ctrl+Shift+F", ::toggleFocus))

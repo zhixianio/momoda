@@ -15,6 +15,31 @@ object Titles {
         return t.ifBlank { null }
     }
 
+    /**
+     * 把首行换成新标题：首行是标题行时保留它的 `#` 级别，否则把首行改成一级标题。
+     * （“首行即标题”：改标题就是改首行。）
+     */
+    fun withTitle(text: String, newTitle: String): String {
+        val firstLineEnd = text.indexOf('\n').let { if (it < 0) text.length else it }
+        val marker = headingPrefix.find(text.substring(0, firstLineEnd))?.value?.trimEnd()?.ifEmpty { null } ?: "#"
+        return "$marker ${newTitle.trim()}" + text.substring(firstLineEnd)
+    }
+
+    /** 摘要：标题之后的前几行正文，去掉 Markdown 标记，压成一行。 */
+    fun excerptOf(text: String, maxChars: Int = 60): String {
+        val lines = text.lineSequence().filter { it.isNotBlank() }.toList()
+        val body = if (lines.isNotEmpty() && titleOf(lines.first()) != null) lines.drop(1) else lines
+        val joined = body.joinToString(" ") { stripMarkers(it).trim() }
+        return if (joined.length > maxChars) joined.take(maxChars) + "…" else joined
+    }
+
+    /** 去掉 Markdown 解析器认出的标记（`#`、`**`、`- ` 等），其他字符原样保留，例如 `3 * 4`。 */
+    private fun stripMarkers(line: String): String {
+        val drop = BooleanArray(line.length)
+        for (st in Markdown.parseLine(line)) if (st.kind == Markdown.Kind.MARKER) for (i in st.start until st.end) drop[i] = true
+        return line.filterIndexed { i, _ -> !drop[i] }
+    }
+
     /** 把标题变成安全的文件名主体（不含扩展名）；变空时用 [fallback]。 */
     fun baseNameFor(title: String?, fallback: String): String {
         val cleaned = (title ?: "")
