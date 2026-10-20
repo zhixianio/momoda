@@ -61,11 +61,12 @@ class MainActivity : Activity() {
     private var syncing = false
     private var syncStatus = ""
     private val fonts by lazy { Fonts(assets) { store.dir } }
-    private val updates by lazy {
+    private val updatesLazy = lazy {
         // debug 包可以用 `--es updateApi <url>` 指向本地模拟的发布地址做测试
         val override = if (BuildConfig.DEBUG) ui.getString("updateApiOverride", null) else null
         Updates(this, override ?: BuildConfig.UPDATE_API)
     }
+    private val updates by updatesLazy
     private val versionName by lazy { packageManager.getPackageInfo(packageName, 0).versionName ?: "0" }
     private val handler = Handler(Looper.getMainLooper())
     private val saveRunnable = Runnable { save() }
@@ -249,6 +250,11 @@ class MainActivity : Activity() {
         doc = store.syncNameWithTitle(doc, editor.text.toString())
         store.lastDocName = doc.name
         autoSync(minIntervalMs = 2 * 60_000L)
+    }
+
+    override fun onDestroy() {
+        if (updatesLazy.isInitialized()) updates.close()
+        super.onDestroy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

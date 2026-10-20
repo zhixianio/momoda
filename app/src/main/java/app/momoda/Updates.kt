@@ -110,6 +110,8 @@ class Updates(private val context: Context, private val apiUrl: String) {
         Thread({
             runCatching {
                 val installer = context.packageManager.packageInstaller
+                // 上一次的安装用户没有确认就离开了：放弃它，不再等它的结果
+                stopListening(abandon = true)
                 val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
                 val id = installer.createSession(params)
                 installer.openSession(id).use { session ->
@@ -127,7 +129,7 @@ class Updates(private val context: Context, private val apiUrl: String) {
                     } finally {
                         conn.disconnect()
                     }
-                    listenForResult(onStatus)
+                    listenForResult(id, onStatus)
                     val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
                     val pi = PendingIntent.getBroadcast(context, id, Intent(ACTION).setPackage(context.packageName), flags)
                     session.commit(pi.intentSender)
@@ -139,9 +141,14 @@ class Updates(private val context: Context, private val apiUrl: String) {
         }, "update-download").apply { isDaemon = true }.start()
     }
 
-    private fun listenForResult(onStatus: (String) -> Unit) {
+    /** 正在等待结果的安装：会话 id 和接收器。用户不确认就离开时它会一直挂着，换 Activity 时要注销。 */
+    private var pending: Pair<Int, BroadcastReceiver>? = null
+
+    private fun listenForResult(id: Int, onStatus: (String) -> Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, intent: Intent) {
+                // 只处理自己这次安装的结果
+                if (intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1) != id) return
                 when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
                     PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                         // 系统需要用户确认（以及第一次时开启“安装未知应用”）
@@ -150,19 +157,31 @@ class Updates(private val context: Context, private val apiUrl: String) {
                         confirm?.let { c.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                         onStatus("请在系统弹窗里确认安装")
                     }
-                    PackageInstaller.STATUS_SUCCESS -> { onStatus("更新完成"); c.unregisterReceiver(this) }
+                    PackageInstaller.STATUS_SUCCESS -> { onStatus("更新完成"); stopListening(abandon = false) }
                     else -> {
                         onStatus("安装没有完成：${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "已取消"}")
-                        c.unregisterReceiver(this)
+                        stopListening(abandon = false)
                     }
                 }
             }
         }
-        // 必须在 commit 之前注册好，否则可能错过结果广播；回调仍在主线程执行
+        // 必须在 commit 之前注册好，否则可能错过结果广播；回调仍在主线程执行。
+        // 注册在 Application 上，不跟着 Activity 泄漏；Activity 销毁时由 close() 注销
+        val app = context.applicationContext
         val filter = IntentFilter(ACTION)
-        if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(receiver, filter, null, main, Context.RECEIVER_NOT_EXPORTED)
-        else context.registerReceiver(receiver, filter, null, main)
+        if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(receiver, filter, null, main, Context.RECEIVER_NOT_EXPORTED)
+        else app.registerReceiver(receiver, filter, null, main)
+        synchronized(this) { pending = id to receiver }
     }
+
+    private fun stopListening(abandon: Boolean) {
+        val (id, receiver) = synchronized(this) { pending.also { pending = null } } ?: return
+        runCatching { context.applicationContext.unregisterReceiver(receiver) }
+        if (abandon) runCatching { context.packageManager.packageInstaller.abandonSession(id) }
+    }
+
+    /** Activity 销毁时调用：不再等安装结果（安装本身由系统继续，用户还能在系统弹窗里确认）。 */
+    fun close() = stopListening(abandon = false)
 
     companion object {
         private const val ACTION = "app.momoda.INSTALL_RESULT"
