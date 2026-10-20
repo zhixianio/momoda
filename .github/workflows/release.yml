@@ -31,7 +31,9 @@ jobs:
           cache-read-only: true
 
       # 版本号完全由 tag 决定：v主.次.修订[-预发布.序号]
-      # versionCode = (主*10000 + 次*100 + 修订)*100 + (正式版 99 / 预发布序号)，保证预发布版总比同版本的正式版小
+      # versionCode = 1000000 + (主*10000 + 次*100 + 修订)*100 + (正式版 99 / 预发布序号)，保证预发布版总比同版本的正式版小。
+      # 加 1000000：曾经试发布过 0.9.0-beta.1（versionCode 90001），版本号改从 0.1.0 开始后，
+      # versionCode 仍要比它大，装过它的设备才能直接覆盖安装。
       - name: 从 tag 推出版本号
         id: ver
         run: |
@@ -40,7 +42,7 @@ jobs:
             echo "::error::tag 格式应为 v1.2.3 或 v1.2.3-beta.4，实际是 $GITHUB_REF_NAME"
             exit 1
           fi
-          base=$(( (BASH_REMATCH[1]*10000 + BASH_REMATCH[2]*100 + BASH_REMATCH[3]) * 100 ))
+          base=$(( 1000000 + (BASH_REMATCH[1]*10000 + BASH_REMATCH[2]*100 + BASH_REMATCH[3]) * 100 ))
           if [ -n "${BASH_REMATCH[5]}" ]; then
             if [ "${BASH_REMATCH[5]}" -ge 99 ]; then echo "::error::预发布序号必须小于 99"; exit 1; fi
             code=$(( base + BASH_REMATCH[5] ))
@@ -87,6 +89,8 @@ jobs:
           sha256sum "$out" > "$out.sha256"
           # R8 混淆映射：用户发来的崩溃堆栈要靠它还原（retrace）
           cp app/build/outputs/mapping/release/mapping.txt "momoda-$GITHUB_REF_NAME-mapping.txt"
+          # 固定文件名的副本：官网用 releases/latest/download/momoda.apk 直接下载最新版
+          cp "$out" momoda.apk
           echo "file=$out" >> "$GITHUB_OUTPUT"
           echo "cert=$(sed -n 's/.*certificate SHA-256 digest: //p' certs.txt | head -1)" >> "$GITHUB_OUTPUT"
 
@@ -94,7 +98,8 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks"
 
-      # 发布说明取 CHANGELOG.md 里对应版本的一节；名字带 - 的版本（如 0.9.0-beta.1）标为预发布
+      # 发布说明取 CHANGELOG.md 里对应版本的一节；名字带 - 的版本（如 0.2.0-beta.1）标为预发布。
+      # 预发布不会出现在 releases/latest：App 的检查更新和官网下载都看不到它，要推给所有人的版本不要带 -
       - name: 发布
         env:
           GH_TOKEN: ${{ github.token }}
@@ -117,6 +122,6 @@ jobs:
           flags=()
           case "$ver" in *-*) flags+=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" \
-            "${{ steps.apk.outputs.file }}" "${{ steps.apk.outputs.file }}.sha256" \
+            "${{ steps.apk.outputs.file }}" "${{ steps.apk.outputs.file }}.sha256" momoda.apk \
             "momoda-$GITHUB_REF_NAME-mapping.txt" \
             --title "墨墨打 $ver" --notes-file notes.md "${flags[@]}"

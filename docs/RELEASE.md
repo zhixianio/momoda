@@ -11,9 +11,9 @@
 ## 发一个版本
 
 1. 在 `CHANGELOG.md` 里写好 `## [版本号] - 日期` 这一节。
-2. 打 tag 并推送：`git tag v0.9.0-beta.1 && git push origin v0.9.0-beta.1`。
-3. `.github/workflows/release.yml` 会：从 tag 推出 versionName 和 versionCode → 下载并校验字体 → 用 Secrets 里的密钥构建 → 确认不是 debug 签名 → 发布 APK、SHA-256 和 R8 mapping 到 GitHub Releases。带 `-` 的版本（如 `-beta.1`）标为预发布。
+2. 打 tag 并推送：`git tag v0.1.0 && git push origin v0.1.0`。
+3. `.github/workflows/release.yml` 会：从 tag 推出 versionName 和 versionCode → 下载并校验字体 → 用 Secrets 里的密钥构建 → 确认不是 debug 签名 → 发布 APK、SHA-256 和 R8 mapping 到 GitHub Releases，另附一份固定文件名的 `momoda.apk` 供官网直链（`releases/latest/download/momoda.apk`）。带 `-` 的版本（如 `-beta.1`）标为预发布：预发布不会出现在 `releases/latest`，App 的检查更新和官网下载都看不到它，所以要推给所有人的版本不要带 `-`。
 
-versionCode = (主×10000 + 次×100 + 修订)×100 + (正式版 99 / 预发布序号)，例如 `v0.9.0-beta.1` → 90001，`v0.9.0` → 90099。
+versionCode = 1000000 + (主×10000 + 次×100 + 修订)×100 + (正式版 99 / 预发布序号)，例如 `v0.1.0` → 1010099，`v0.2.0-beta.1` → 1020001。加 1000000 是因为曾经试发布过 `v0.9.0-beta.1`（versionCode 90001，已撤回），之后的版本要比它大，装过它的设备才能直接覆盖安装。
 
 App 内的“检查更新”读的是 `https://api.github.com/repos/zhixianio/momoda/releases/latest`（不含预发布版）。

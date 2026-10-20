@@ -14,21 +14,48 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** 版本号比较：`v0.2.0` 与 `0.1.9-m0` 这类写法都能比；只比数字部分，后缀（-m0、-beta）视为更旧。 */
+/**
+ * 版本号比较：`v0.2.0` 与 `0.1.9-m0` 这类写法都能比。先比数字部分；数字相同时，带后缀（-m0、-beta.2）的预览版
+ * 比正式版旧，两个预览版之间按后缀逐段比较（beta.1 < beta.2 < beta.10）。
+ */
 object Versions {
     fun parse(v: String): List<Int> =
         v.trim().removePrefix("v").removePrefix("V").substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
 
+    private fun suffix(v: String): String? = v.trim().substringAfter('-', "").ifEmpty { null }
+
     fun isNewer(candidate: String, current: String): Boolean {
-        val a = parse(candidate)
-        val b = parse(current)
+        val c = compareNumbers(parse(candidate), parse(current))
+        if (c != 0) return c > 0
+        val a = suffix(candidate)
+        val b = suffix(current)
+        return when {
+            a == null || b == null -> a == null && b != null // 正式版比预览版新
+            else -> compareSuffix(a, b) > 0
+        }
+    }
+
+    private fun compareNumbers(a: List<Int>, b: List<Int>): Int {
         for (i in 0 until maxOf(a.size, b.size)) {
             val x = a.getOrElse(i) { 0 }
             val y = b.getOrElse(i) { 0 }
-            if (x != y) return x > y
+            if (x != y) return x.compareTo(y)
         }
-        // 数字相同：正式版比带后缀的预览版新
-        return !candidate.contains('-') && current.contains('-')
+        return 0
+    }
+
+    private fun compareSuffix(a: String, b: String): Int {
+        val pa = a.split('.')
+        val pb = b.split('.')
+        for (i in 0 until maxOf(pa.size, pb.size)) {
+            val x = pa.getOrNull(i) ?: return -1
+            val y = pb.getOrNull(i) ?: return 1
+            val nx = x.toIntOrNull()
+            val ny = y.toIntOrNull()
+            val r = if (nx != null && ny != null) nx.compareTo(ny) else x.compareTo(y)
+            if (r != 0) return r
+        }
+        return 0
     }
 }
 
