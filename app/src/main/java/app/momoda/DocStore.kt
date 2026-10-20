@@ -195,30 +195,40 @@ class DocStore(private val context: Context) {
         return true
     }
 
-    /** 逐个复制并校验后再删除原文件；目标里已有同名文件时改名，不覆盖。 */
+    /** 逐个搬过去（见 [moveVerified]）。 */
     private fun migrate(from: File, to: File) {
         val files = from.listFiles { f -> f.isFile && f.name.endsWith(".md") && !f.name.startsWith(".") }.orEmpty()
         for (src in files) {
             val text = src.readText()
             if (isEmptyDoc(text)) { src.delete(); continue }
-            val name = Titles.uniqueFileName(src.nameWithoutExtension) { File(to, it).exists() }
-            val dst = File(to, name)
-            FileOutputStream(dst).use { it.write(text.toByteArray()); it.fd.sync() }
-            if (dst.readText() == text) {
-                dst.setLastModified(src.lastModified())
-                val cursor = cursorOf(src)
-                src.delete()
-                if (cursor >= 0) saveCursor(dst, cursor)
-                if (lastDocName == src.name) lastDocName = dst.name
-                if (previousDocName == src.name) previousDocName = dst.name
-                Log.i("momoda", "migrated ${src.name} → ${dst.absolutePath}")
-            }
+            val cursor = cursorOf(src)
+            val dst = moveVerified(src, text, to) ?: continue
+            if (cursor >= 0) saveCursor(dst, cursor)
+            if (lastDocName == src.name) lastDocName = dst.name
+            if (previousDocName == src.name) previousDocName = dst.name
+            Log.i("momoda", "migrated ${src.name} → ${dst.absolutePath}")
         }
     }
 
     private fun today() = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
 
     companion object {
+        /**
+         * 把内容为 [text] 的 [src] 搬进 [to]：复制、fsync、读回校验后才删原文件，返回新文件；校验失败返回 null，原文件不动。
+         * 目标里已有同名文件时改名另存，不覆盖；但内容完全相同时直接删原文件——
+         * 收回权限期间自动同步会把文档下载到私有目录，重新授权时每篇都会多出一份“标题 2”，再被同步推到其他设备。
+         */
+        internal fun moveVerified(src: File, text: String, to: File): File? {
+            val same = File(to, src.name)
+            if (same.isFile && same.readText() == text) { src.delete(); return same }
+            val dst = File(to, Titles.uniqueFileName(src.nameWithoutExtension) { File(to, it).exists() })
+            FileOutputStream(dst).use { it.write(text.toByteArray()); it.fd.sync() }
+            if (dst.readText() != text) return null
+            dst.setLastModified(src.lastModified())
+            src.delete()
+            return dst
+        }
+
         fun publicDir() = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "momoda")
 
         fun hasPublicAccess(context: Context): Boolean =
