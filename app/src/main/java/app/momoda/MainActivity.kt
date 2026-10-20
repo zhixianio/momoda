@@ -611,9 +611,11 @@ class MainActivity : Activity() {
     }
 
     private fun deleteDoc() {
+        // 先保存：回收站里应当是删除时屏幕上的样子，包括最后 800ms 内打的字
+        save()
+        if (dirty) { toast("保存失败，暂不删除"); return }
         val victim = doc
         val title = Titles.titleOf(editor.text) ?: victim.nameWithoutExtension
-        dirty = false
         store.moveToTrash(victim)
         loadDoc(store.list().firstOrNull() ?: store.create())
         toast("已移到回收站：$title")
