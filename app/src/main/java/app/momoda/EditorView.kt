@@ -481,12 +481,21 @@ class EditorView(context: Context) : EditText(context) {
      * 空行（段落之间的分隔）只占 [ratio] 倍行高，替代整行空白（DESIGN §2.3）。
      * 真机反馈半行高仍然偏大，改为 1/4；M2 做成设置里可调的“段距”。
      */
-    private class BlankLineSpacing(var ratio: Float = 0.25f) : LineHeightSpan {
+    internal class BlankLineSpacing(var ratio: Float = 0.25f) : LineHeightSpan {
+        companion object {
+            /**
+             * 这一行是不是“段距”：紧跟在文字行后面的第一个空行。之后连续的空行是用户有意留的空白，按正常行高显示，
+             * 否则光标在几个空行里上下移动、删除时每次只挪四分之一行，看起来像行距突然变得很小。
+             */
+            fun isParagraphGap(text: CharSequence, start: Int, end: Int): Boolean =
+                end - start == 1 && text[start] == '\n' &&
+                    start >= 2 && text[start - 1] == '\n' && text[start - 2] != '\n'
+        }
+
         override fun chooseHeight(
             text: CharSequence, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: Paint.FontMetricsInt,
         ) {
-            if (end - start != 1 || text[start] != '\n') return
-            if (start == 0 || text[start - 1] != '\n') return
+            if (!isParagraphGap(text, start, end)) return
             // 行距倍数是按字体高度乘出来的，所以直接缩字体高度，整行（含行距）就按同样比例缩小
             fm.descent = fm.ascent + ((fm.descent - fm.ascent) * ratio).toInt()
             fm.bottom = fm.descent
