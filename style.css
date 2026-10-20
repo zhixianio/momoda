@@ -2,7 +2,7 @@
 
 @font-face {
   font-family: "WenKai Screen";
-  src: url("fonts/wenkai-screen-subset.woff2") format("woff2");
+  src: url("fonts/wenkai-screen-subset.woff2?v=65a8af86") format("woff2");
   font-display: swap;
 }
 

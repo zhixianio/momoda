@@ -5,8 +5,9 @@
     python3 tools/build-font.py /path/to/LXGWWenKaiScreen.ttf
 
 字体来自 https://github.com/lxgw/LxgwWenKai-Screen （SIL OFL 1.1，见 fonts/OFL.txt）。
-作者的额外许可允许为网页字体用途子集化并沿用原字体名。改了 HTML 文字后要重新运行。
+作者的额外许可允许为网页字体用途子集化并沿用原字体名。改了 HTML、CSS 或 JS 后都要重新运行（它也负责更新资源地址里的版本号）。
 """
+import hashlib
 import re
 import sys
 from html import unescape
@@ -35,4 +36,17 @@ subsetter = subset.Subsetter(options)
 subsetter.populate(text="".join(sorted(chars)))
 subsetter.subset(font)
 subset.save_font(font, str(OUT), options)
+# 字体地址带上内容哈希，改了字以后浏览器不会继续用缓存里的旧字体
+ver = hashlib.sha256(OUT.read_bytes()).hexdigest()[:8]
+for ref in [ROOT / "style.css", *ROOT.glob("*.html")]:
+    text = ref.read_text(encoding="utf-8")
+    text = re.sub(r"wenkai-screen-subset\.woff2(\?v=[0-9a-f]+)?", f"wenkai-screen-subset.woff2?v={ver}", text)
+    ref.write_text(text, encoding="utf-8")
+# 样式表和脚本同理（样式表里有字体地址，所以要在上一步之后算）
+for asset in ("style.css", "site.js"):
+    h = hashlib.sha256((ROOT / asset).read_bytes()).hexdigest()[:8]
+    for page in ROOT.glob("*.html"):
+        text = page.read_text(encoding="utf-8")
+        text = re.sub(rf'(["/]){re.escape(asset)}(\?v=[0-9a-f]+)?"', rf'\g<1>{asset}?v={h}"', text)
+        page.write_text(text, encoding="utf-8")
 print(f"{len(chars)} 个字符 → {OUT.relative_to(ROOT)}（{OUT.stat().st_size // 1024} KB）")
