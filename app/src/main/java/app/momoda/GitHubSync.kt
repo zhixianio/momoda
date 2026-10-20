@@ -144,7 +144,8 @@ class GitHubSync(
         // 2. 本地和上次同步的状态
         val local = scanLocal()
         val state = loadState()
-        val base = if (state.optString("key") == stateKey()) toMap(state.optJSONObject("base")) else emptyMap()
+        val key = state.optString("key")
+        val base = if (key == stateKey() || key == legacyStateKey()) toMap(state.optJSONObject("base")) else emptyMap()
 
         // 3. 决策并执行
         val stamp = SimpleDateFormat("MMdd-HHmm", Locale.CHINA).format(Date())
@@ -206,7 +207,15 @@ class GitHubSync(
         return if (push) "连接成功：${r.optString("full_name")}（可以写入）" else "能读取 ${r.optString("full_name")}，但没有写入权限：请给 token 加上 Contents 的 Read and write"
     }
 
-    private fun stateKey() = "${target.apiBase}|${target.repo}|${target.branch}|${target.subdir}"
+    /**
+     * “上次同步的状态”属于哪一对（远端位置，本地目录）。本地目录也要算在内：
+     * 收回存储权限后文档目录会退回 App 私有目录，里面没有这些文档；
+     * 如果沿用原来的 base，会被当成“本地全删了”，把远端的文档全部删掉。
+     */
+    private fun stateKey() = "${legacyStateKey()}|${dir.absolutePath}"
+
+    /** 0.9.0-beta.1 的 key 不含本地目录；升级后第一次同步时认为目录没变。 */
+    private fun legacyStateKey() = "${target.apiBase}|${target.repo}|${target.branch}|${target.subdir}"
 
     /** 子目录前缀，例如 `notes/momoda/`；根目录时为空。 */
     private val prefix = target.subdir.let { if (it.isEmpty()) "" else "$it/" }
