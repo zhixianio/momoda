@@ -49,6 +49,11 @@ class MainActivity : Activity() {
     private lateinit var headerTitle: TextView
     private lateinit var headerClock: TextView
     private lateinit var footer: TextView
+    /** 页脚中间：当前的输入状态（Vim 普通/输入、大写锁定）。 */
+    private lateinit var footerMode: TextView
+    /** 页脚右侧（“⋯”左边）：同步、更新、存储授权这类提示。 */
+    private lateinit var footerNotes: TextView
+    private lateinit var footerBar: LinearLayout
     private lateinit var debug: TextView
     private lateinit var menuButton: TextView
     private lateinit var font: Typeface
@@ -127,7 +132,7 @@ class MainActivity : Activity() {
 
         buildLayout()
 
-        vim = Vim(editor) { }
+        vim = Vim(editor) { refreshChrome() }
         applySettings()
 
         editor.preImeKeyHandler = ::onKeyPreIme
@@ -190,13 +195,30 @@ class MainActivity : Activity() {
             addView(headerTitle, LinearLayout.LayoutParams(0, -2, 1f))
             addView(headerClock, LinearLayout.LayoutParams(-2, -2))
         }
-        // 页脚靠左，和页眉的标题对齐；右侧留给“⋯”
+        // 页脚分左中右：左边字数和保存状态（和页眉标题对齐），中间输入状态，右边其他提示，最右留给“⋯”
         footer = chromeText().apply {
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
+        }
+        footerMode = chromeText().apply {
+            gravity = Gravity.CENTER
+            maxLines = 1
+            setTextColor(Color.BLACK)
+        }
+        footerNotes = chromeText().apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.START
+        }
+        footerBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(28), dp(6), dp(64), dp(14))
             setOnClickListener { showPalette() }
+            addView(footer, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(footerMode, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(16); marginEnd = dp(16) })
+            addView(footerNotes, LinearLayout.LayoutParams(0, -2, 1f))
         }
         // 笔/触控入口：右下角的“⋯”常驻（zen 模式下也在），点页脚也能打开命令面板。
         // 用软键盘或笔的时候没有 Ctrl+K，这是唯一入口。
@@ -222,7 +244,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             addView(header, LinearLayout.LayoutParams(-1, -2))
             addView(editor, LinearLayout.LayoutParams(-1, 0, 1f))
-            addView(footer, LinearLayout.LayoutParams(-1, -2))
+            addView(footerBar, LinearLayout.LayoutParams(-1, -2))
         }
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.WHITE)
@@ -745,7 +767,7 @@ class MainActivity : Activity() {
         if (vim.enabled != settings.vim) vim.enabled = settings.vim
         val v = if (settings.chrome) View.VISIBLE else View.GONE
         header.visibility = v
-        footer.visibility = v
+        footerBar.visibility = v
     }
 
     /** 全局统一一种字体：正文、页眉页脚、弹窗（DESIGN §2.8）。 */
@@ -755,6 +777,8 @@ class MainActivity : Activity() {
         headerTitle.typeface = tf
         headerClock.typeface = tf
         footer.typeface = tf
+        footerMode.typeface = tf
+        footerNotes.typeface = tf
     }
 
     private fun showSettings() {
@@ -1070,19 +1094,25 @@ class MainActivity : Activity() {
 
     // ---------- 页眉页脚 ----------
 
-    /** 页眉：标题；页脚：字数 · 保存状态。 */
+    /** 页眉：标题；页脚：左边字数 · 保存状态，中间 Vim 模式和大写锁定，右边同步、更新、存储授权。 */
     private fun refreshChrome() {
         headerTitle.text = Titles.titleOf(editor.text) ?: "未命名"
         val words = TextStats.format(TextStats.wordCount(editor.text))
-        val where = if (store.isPublic) "" else " · 未授权存储"
-        val update = (updates.latest?.let { " · 有新版本 ${it.version}" } ?: "") + (if (syncStatus.isNotEmpty()) " · $syncStatus" else "")
         val state = when {
             saveError != null -> "保存失败，正在重试"
             dirty -> "保存中"
             else -> "已保存"
         }
-        val caps = if (capsLockOn) " · 大写锁定" else ""
-        footer.text = "$words 字 · $state$caps$where$update"
+        footer.text = "$words 字 · $state"
+        val vimMode = if (::vim.isInitialized && vim.enabled) {
+            if (vim.mode == Vim.Mode.NORMAL) "Vim · 普通" else "Vim · 输入"
+        } else null
+        footerMode.text = listOfNotNull(vimMode, if (capsLockOn) "大写锁定" else null).joinToString("　")
+        footerNotes.text = listOfNotNull(
+            syncStatus.ifEmpty { null },
+            updates.latest?.let { "有新版本 ${it.version}" },
+            if (store.isPublic) null else "未授权存储",
+        ).joinToString(" · ")
     }
 
     /** 页眉右侧：时间，电量低于 20% 时附带电量。按分钟更新。 */
