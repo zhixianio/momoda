@@ -143,6 +143,9 @@ class MainActivity : Activity() {
             }
         })
 
+        // 先拿焦点再载入文档：编辑器还没排版时获得焦点，系统会把光标挪到文末（ArrowKeyMovementMethod.onTakeFocus），
+        // 冷启动就回不到上次的光标位置
+        editor.requestFocus()
         val tViews = SystemClock.uptimeMillis()
         open(store.openLastOrCreate())
         val tOpen = SystemClock.uptimeMillis()
@@ -166,7 +169,6 @@ class MainActivity : Activity() {
                 return true
             }
         })
-        editor.requestFocus()
 
         if (!store.isPublic && !store.askedForAccess) handler.post { askForStorageAccess() }
     }

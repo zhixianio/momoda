@@ -164,10 +164,31 @@ class DocStore(private val context: Context) {
 
     fun saveCursor(file: File, offset: Int) = prefs.edit().putInt("cursor:${file.name}", offset).apply()
 
-    fun openLastOrCreate(): File =
-        lastDocName?.let { File(dir, it) }?.takeIf { it.exists() }
+    fun openLastOrCreate(): File {
+        val file = lastDocName?.let { File(dir, it) }?.takeIf { it.exists() }
             ?: list().firstOrNull()
+            ?: (if (welcomed) null else createWelcome())
             ?: create()
+        // 只有全新安装、目录里还没有文档时才放欢迎文档；已有文档的用户升级后也就此标记，删掉后不会再出现
+        welcomed = true
+        return file
+    }
+
+    private var welcomed: Boolean
+        get() = prefs.getBoolean("welcomed", false)
+        set(v) = prefs.edit().putBoolean("welcomed", v).apply()
+
+    private val welcomeText: String? by lazy {
+        runCatching { context.assets.open("welcome.md").bufferedReader().use { it.readText() } }.getOrNull()
+    }
+
+    /** 第一次打开时的说明文档（assets/welcome.md），就是一篇普通文档。 */
+    private fun createWelcome(): File? {
+        val text = welcomeText ?: return null
+        val name = Titles.uniqueFileName("欢迎使用墨墨打") { File(dir, it).exists() }
+        // 光标放在开头，打开时从第一行读起（默认会跳到文末）
+        return File(dir, name).apply { writeText(text); saveCursor(this, 0) }
+    }
 
     // ---------- 存储位置 ----------
 
@@ -203,9 +224,11 @@ class DocStore(private val context: Context) {
     /** 逐个搬过去（见 [moveVerified]）。 */
     private fun migrate(from: File, to: File) {
         val files = from.listFiles { f -> f.isFile && f.name.endsWith(".md") && !f.name.startsWith(".") }.orEmpty()
+        // 重装 App 时 Documents/momoda 里已经有文档：没改过的欢迎文档不再搬过去
+        val targetHasDocs = to.listFiles { f -> f.isFile && f.name.endsWith(".md") && !f.name.startsWith(".") }.orEmpty().isNotEmpty()
         for (src in files) {
             val text = src.readText()
-            if (isEmptyDoc(text)) { src.delete(); continue }
+            if (isEmptyDoc(text) || (targetHasDocs && text == welcomeText)) { src.delete(); continue }
             val cursor = cursorOf(src)
             val dst = moveVerified(src, text, to) ?: continue
             if (cursor >= 0) saveCursor(dst, cursor)
