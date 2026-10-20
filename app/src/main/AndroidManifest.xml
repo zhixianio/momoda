@@ -33,5 +33,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 实体键盘布局：在系统设置里选用后，CapsLock 在系统层面就是 Ctrl，不会切换大写锁定 -->
+        <receiver
+            android:name=".KeyboardLayouts"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.hardware.input.action.QUERY_KEYBOARD_LAYOUTS" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.input.metadata.KEYBOARD_LAYOUTS"
+                android:resource="@xml/keyboard_layouts" />
+        </receiver>
     </application>
 </manifest>

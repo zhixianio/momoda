@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">墨墨打</string>
+    <string name="keyboard_layout_caps_ctrl">墨墨打：CapsLock 当 Ctrl</string>
 
     <!-- 墨水屏：纯白底、无动画、无启动预览闪烁 -->
     <style name="Theme.Momoda" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统设置 → 实体键盘 → 键盘布局 里可以选的布局 -->
+<keyboard-layouts xmlns:android="http://schemas.android.com/apk/res/android">
+    <keyboard-layout
+        android:name="caps_as_ctrl"
+        android:label="@string/keyboard_layout_caps_ctrl"
+        android:keyboardLayout="@raw/keyboard_layout_caps_ctrl" />
+</keyboard-layouts>

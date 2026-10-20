@@ -644,8 +644,9 @@ class MainActivity : Activity() {
         add(Command("about", "系统设置 · 关于本机", "连点版本号开启开发者选项") {
             openSystemSettings(Settings.ACTION_DEVICE_INFO_SETTINGS, "Settings\$MyDeviceInfoActivity")
         })
-        // 系统层面把 CapsLock 改成 Ctrl 最干净（按它不会切换大写锁定）：较新的 Android 在这里有“修饰键”
-        add(Command("hardkeyboard", "系统设置 · 实体键盘", "有的系统可以在这里把 CapsLock 改成 Ctrl") {
+        // 系统层面把 CapsLock 改成 Ctrl 最干净（按它不会切换大写锁定）：在这里给键盘选用墨墨打提供的布局
+        // “墨墨打：CapsLock 当 Ctrl”（res/raw/keyboard_layout_caps_ctrl.kcm），较新的 Android 还有“修饰键”
+        add(Command("hardkeyboard", "系统设置 · 实体键盘", "选用布局“墨墨打：CapsLock 当 Ctrl”") {
             openSystemSettings(Settings.ACTION_HARD_KEYBOARD_SETTINGS, "Settings\$PhysicalKeyboardActivity")
         })
         add(Command("devopts", "系统设置 · 开发者选项") {

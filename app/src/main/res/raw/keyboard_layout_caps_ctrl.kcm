@@ -1,0 +1,5 @@
+# 墨墨打提供的实体键盘布局：在系统默认布局之上，把 CapsLock 键（扫描码 58）改成左 Ctrl。
+# 系统层面的改键：按它不会切换大写锁定，在所有 App 里都是 Ctrl。
+type OVERLAY
+
+map key 58 CTRL_LEFT
