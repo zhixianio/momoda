@@ -90,6 +90,8 @@ class MainActivity : Activity() {
     private val consumedDowns = mutableSetOf<Int>()
     /** “CapsLock 当 Ctrl”打开时，CapsLock 正被按住。 */
     private var capsHeld = false
+    /** 实体键盘的大写锁定是否打开（从最近一次按键的状态得知）。 */
+    private var capsLockOn = false
 
     private val gray = Color.rgb(0x77, 0x77, 0x77)
 
@@ -496,6 +498,12 @@ class MainActivity : Activity() {
 
     private fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_UP && consumedDowns.remove(keyCode)) return true
+        // 大写锁定的状态跟着每个按键带过来：变了就在页脚标出来，并提示一次（Zen 模式下看不到页脚）
+        if (event.isCapsLockOn != capsLockOn) {
+            capsLockOn = event.isCapsLockOn
+            refreshChrome()
+            toast(if (capsLockOn) "大写锁定已打开" else "大写锁定已关闭")
+        }
 
         // CapsLock 当 Ctrl：按住期间记下来，自己的按下和抬起都不交给输入法
         if (keyCode == KeyEvent.KEYCODE_CAPS_LOCK && settings.capsAsCtrl) {
@@ -1068,7 +1076,8 @@ class MainActivity : Activity() {
             dirty -> "保存中"
             else -> "已保存"
         }
-        footer.text = "$words 字 · $state$where$update"
+        val caps = if (capsLockOn) " · 大写锁定" else ""
+        footer.text = "$words 字 · $state$caps$where$update"
     }
 
     /** 页眉右侧：时间，电量低于 20% 时附带电量。按分钟更新。 */

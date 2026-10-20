@@ -49,15 +49,16 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
             editor.onKeyShortcut(KeyEvent.KEYCODE_Z, ctrlShift(event, KeyEvent.KEYCODE_Z))
             return true
         }
-        val ch = event.getUnicodeChar(event.metaState).toChar()
+        // 忽略大写锁定：不小心开了 CapsLock，hjkl 会变成 HJKL，整个 normal 模式就像失灵了。大写命令照常用 Shift
+        val ch = event.getUnicodeChar(event.metaState and KeyEvent.META_CAPS_LOCK_ON.inv()).toChar()
         val p = pending
         pending = null
         when {
             p == 'g' && ch == 'g' -> move(0)
             p == 'd' && ch == 'd' -> deleteParagraph()
             ch == 'g' || ch == 'd' -> pending = ch
-            ch == 'h' -> move(cursor - 1)
-            ch == 'l' -> move(cursor + 1)
+            ch == 'h' -> moveChar(-1)
+            ch == 'l' -> moveChar(+1)
             ch == 'j' -> moveLine(+1)
             ch == 'k' -> moveLine(-1)
             ch == 'w' -> move(nextWord(cursor))
@@ -65,7 +66,8 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
             ch == '0' -> layout?.let { move(it.getLineStart(it.getLineForOffset(cursor))) }
             ch == '$' -> layout?.let { move(lineEndExclusiveNewline(it.getLineForOffset(cursor))) }
             ch == 'G' -> move(text.length)
-            ch == 'x' -> if (cursor < text.length) text.delete(cursor, cursor + 1)
+            // 和 vim 一样，x 不删换行：否则在空行上按 x 会把上下两段并成一段
+            ch == 'x' -> if (cursor < text.length && text[cursor] != '\n') text.delete(cursor, cursor + 1)
             ch == 'u' -> editor.onKeyShortcut(KeyEvent.KEYCODE_Z, ctrl(event, KeyEvent.KEYCODE_Z))
             ch == 'i' -> setMode(Mode.INSERT)
             ch == 'a' -> { move(cursor + 1); setMode(Mode.INSERT) }
@@ -89,6 +91,12 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
     private val layout get() = editor.layout
 
     private fun move(offset: Int) = editor.setSelection(offset.coerceIn(0, text.length))
+
+    /** 左右移一个字符；落到段距空行上就再移一个（那一行只有 1/4 行高，不是能写字的地方）。 */
+    private fun moveChar(delta: Int) {
+        move(cursor + delta)
+        if (editor.onParagraphGap()) move(cursor + delta)
+    }
 
     private fun moveLine(delta: Int) {
         val l = layout ?: return

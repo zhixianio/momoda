@@ -285,6 +285,16 @@ class EditorView(context: Context) : EditText(context) {
      * 上下移动后光标落在段距空行上（只有 1/4 行高，光标画在那里看起来飘在两段之间）：再往同一方向移一行。
      * [x] 是移动前光标的横坐标，尽量保持在同一列。
      */
+    /** 光标是不是停在段距空行上。 */
+    fun onParagraphGap(): Boolean {
+        val l = layout ?: return false
+        val t = text ?: return false
+        val s = selectionStart
+        if (s < 0) return false
+        val line = l.getLineForOffset(s)
+        return BlankLineSpacing.isParagraphGap(t, l.getLineStart(line), l.getLineEnd(line))
+    }
+
     fun skipParagraphGap(direction: Int, x: Float) {
         val l = layout ?: return
         val t = text ?: return
