@@ -66,6 +66,8 @@ h1 { font-size: 46px; line-height: 1.25; margin: 0 0 .35em; font-weight: 700; le
 .tagline { font-size: 25px; line-height: 1.6; margin: 0 0 1.1em; }
 .cursor { display: inline-block; width: 2px; height: 1.05em; background: var(--ink); vertical-align: -.15em; margin-left: .12em; }
 .lede { margin: 0 0 2em; }
+.meta { color: #6f6f6f; }
+.meta .sep { margin: 0 .6em; color: #bbb; }
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 28px; margin: 0; }
 .button {
