@@ -728,6 +728,7 @@ class MainActivity : Activity() {
         editor.charsPerLine = settings.charsPerLine
         editor.indentParagraphs = settings.indent
         editor.focusMode = settings.focus
+        editor.scrollMode = settings.scrollMode
         if (vim.enabled != settings.vim) vim.enabled = settings.vim
         val v = if (settings.chrome) View.VISIBLE else View.GONE
         header.visibility = v
@@ -761,6 +762,9 @@ class MainActivity : Activity() {
                 settings.paragraphSpacing = step(UserSettings.PARAGRAPH_SPACINGS, settings.paragraphSpacing, d); applySettings()
             }),
             SettingsPanel.Row("版心宽度", { "每行 ${settings.charsPerLine} 字" }, { d -> settings.charsPerLine += 2 * d; applySettings() }),
+            SettingsPanel.Row("翻页方式", { settings.scrollMode.label }, { d ->
+                settings.scrollMode = step(EditorView.ScrollMode.entries, settings.scrollMode, d); applySettings()
+            }),
             SettingsPanel.Row("段首缩进两字", { onOff(settings.indent) }, { settings.indent = !settings.indent; applySettings() }, isToggle = true),
             SettingsPanel.Row("页眉页脚", { onOff(settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true),
             SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true),

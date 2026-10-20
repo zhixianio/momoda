@@ -367,9 +367,21 @@ class EditorView(context: Context) : EditText(context) {
         return false
     }
 
+    /** 光标走到屏幕边缘时怎么翻。 */
+    enum class ScrollMode(val label: String) {
+        /** 一行一行跟着光标走，笔拖动时跟手滚动。 */
+        CONTINUOUS("连续"),
+        /** 光标到底部 1/4 时，把当前行推到屏幕上部 1/4 处；笔滑动翻半页。 */
+        HALF("半页"),
+        /** 光标到底部时，把当前行推到屏幕顶端；笔滑动翻整页。 */
+        FULL("整页"),
+    }
+
+    var scrollMode = ScrollMode.CONTINUOUS
+
     /**
-     * 翻半页：光标快到可写区域底部时，一次把它所在行推到屏幕上部 1/4 处。
-     * 不做逐行滚动——墨水屏上每滚一行都是一次整屏变化。
+     * 让光标留在屏幕上。连续模式下只滚到刚好露出光标所在行和下一行（往上时是上一行），一次一行；
+     * 半页、整页模式下一次跳一大段，墨水屏整屏刷新的次数少。滚动位置都对齐到行首，屏幕顶端不出现半行字。
      */
     private fun keepCursorOnPage() {
         if (browsing) return
@@ -377,12 +389,41 @@ class EditorView(context: Context) : EditText(context) {
         val line = l.getLineForOffset(selectionEnd.coerceAtLeast(0))
         val top = l.getLineTop(line) + extendedPaddingTop
         val bottom = l.getLineBottom(line) + extendedPaddingTop
-        val writableBottom = scrollY + height - writingMargin
+        if (scrollMode == ScrollMode.CONTINUOUS) {
+            // 多露出一行：往下写时看得到下一行的位置，往上移时看得到上一行
+            // 相邻的是段距空行时再多算一行，露出的是真正的文字行
+            val t = text
+            fun gap(n: Int) = n in 0 until l.lineCount && BlankLineSpacing.isParagraphGap(t, l.getLineStart(n), l.getLineEnd(n))
+            val next = (if (gap(line + 1)) line + 2 else line + 1).coerceAtMost(l.lineCount - 1)
+            val prev = (if (gap(line - 1)) line - 2 else line - 1).coerceAtLeast(0)
+            val below = l.getLineBottom(next) - l.getLineBottom(line)
+            val above = l.getLineTop(line) - l.getLineTop(prev)
+            val visibleBottom = scrollY + height - extendedPaddingBottom
+            val target = when {
+                bottom + below > visibleBottom -> {
+                    val min = bottom + below - (height - extendedPaddingBottom)
+                    var ln = l.getLineForVertical(min)
+                    if (l.getLineTop(ln) < min && ln + 1 < l.lineCount) ln++
+                    // 屏幕顶端不停在段距空行上：否则下一次只滚这 1/4 行
+                    if (gap(ln) && ln + 1 < l.lineCount) ln++
+                    l.getLineTop(ln)
+                }
+                top - above < scrollY + extendedPaddingTop -> l.getLineTop(l.getLineForVertical(max(0, top - above - extendedPaddingTop)))
+                else -> return
+            }
+            if (target != scrollY) scrollTo(0, max(0, target))
+            return
+        }
+        val writableBottom = scrollY + height - (if (scrollMode == ScrollMode.FULL) extendedPaddingBottom else writingMargin)
         val tooLow = bottom > writableBottom - lineHeight
         val tooHigh = top < scrollY + extendedPaddingTop
         if (tooLow || tooHigh) {
-            // 专注模式下把当前行放到屏幕中部，视线停在中间；否则放到上部 1/4，一次能多写半屏
-            val anchor = if (focusShown) (height * 0.4f).toInt() else height / 4
+            // 整页：放到顶端（留一行衔接）。半页：专注模式下放到屏幕中部，视线停在中间；否则放到上部 1/4
+            val anchor = when {
+                scrollMode == ScrollMode.FULL -> extendedPaddingTop + lineHeight
+                focusShown -> (height * 0.4f).toInt()
+                else -> height / 4
+            }
             // 对齐到行首：屏幕顶端不出现半行字（和 [page] 一样）
             val y = max(0, top - anchor)
             scrollTo(0, if (y > 0) l.getLineTop(l.getLineForVertical(y)) else 0)
@@ -416,6 +457,11 @@ class EditorView(context: Context) : EditText(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> { downX = event.x; downY = event.y; swiping = false }
             MotionEvent.ACTION_MOVE -> {
+                // 连续模式：交给 EditText 跟手滚动；拖走之后不把视图拉回光标处，直到再打字或移动光标
+                if (scrollMode == ScrollMode.CONTINUOUS) {
+                    if (abs(event.y - downY) > touchSlop) browsing = true
+                    return super.onTouchEvent(event)
+                }
                 // 门槛比系统的拖动滚动低：抢在 EditText 自己开始跟手滚动之前接管竖向拖动
                 val dy = abs(event.y - downY)
                 if (!swiping && dy > touchSlop / 2 && dy > abs(event.x - downX)) {
@@ -428,7 +474,7 @@ class EditorView(context: Context) : EditText(context) {
             }
             MotionEvent.ACTION_UP -> if (swiping) {
                 // 向上滑看后面，向下滑看前面；滑得太短视为手抖，不翻页
-                if (abs(event.y - downY) > touchSlop * 3) page(if (event.y < downY) +1 else -1, 0.5f)
+                if (abs(event.y - downY) > touchSlop * 3) page(if (event.y < downY) +1 else -1, if (scrollMode == ScrollMode.FULL) 1f else 0.5f)
                 swiping = false
                 return true
             }

@@ -44,6 +44,11 @@ class UserSettings(context: Context) {
         get() = prefs.getBoolean("vim", false)
         set(v) = prefs.edit().putBoolean("vim", v).apply()
 
+    /** 光标走到屏幕边缘时怎么翻：连续（一行一行）、半页、整页。 */
+    var scrollMode: EditorView.ScrollMode
+        get() = runCatching { EditorView.ScrollMode.valueOf(prefs.getString("scrollMode", null) ?: "") }.getOrDefault(EditorView.ScrollMode.CONTINUOUS)
+        set(v) = prefs.edit().putString("scrollMode", v.name).apply()
+
     /** 把实体键盘的 CapsLock 当作 Ctrl 用（按住期间）。 */
     var capsAsCtrl: Boolean
         get() = prefs.getBoolean("capsAsCtrl", false)
