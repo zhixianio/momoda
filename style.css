@@ -145,7 +145,7 @@ kbd {
 .download .waiting { display: flex; gap: 16px; align-items: center; margin: .2em 0 1.4em; }
 .download .waiting .mark { width: 46px; flex: none; }
 .download .waiting p { margin: 0; }
-.download .actions { margin: 0 0 1.4em; }
+.download .actions { margin: 0; }
 .note { font-size: 15px; color: #6f6f6f; }
 
 @media (max-width: 720px) {

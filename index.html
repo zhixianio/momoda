@@ -37,7 +37,7 @@
   <p class="tagline">为墨水屏写中文。即开即打。<span class="cursor" aria-hidden="true"></span></p>
   <p class="lede">为 Android 墨水屏设计的中文写作应用。启动后直接打开上次的文档，光标停在上次的位置。</p>
   <p class="actions">
-    <a class="button" href="#download">下载预览版<span class="soon">0.9.0-beta.1</span></a>
+    <a class="button" href="#download">下载预览版</a>
     <a class="quiet" href="https://github.com/zhixianio/momoda">源代码</a>
   </p>
 </section>
@@ -54,38 +54,42 @@
 
 <section class="core">
   <div>
-    <h2><span class="mk">## </span>屏幕稳定</h2>
-    <p>光标常亮，不闪烁。写满一页时整页翻过，不滚动。专注模式下，当前段落为黑色，其余段落为浅灰色。</p>
+    <h2><span class="mk">## </span>为中文优化</h2>
+    <p>标点避头尾，中文引号使用全角字形，内置霞鹜文楷。字数按汉字和英文单词统计。命令和文档支持拼音首字母搜索。推荐搭配 fcitx5 与小鹤双拼。</p>
   </div>
   <div>
-    <h2><span class="mk">## </span>中文排版</h2>
-    <p>标点避头尾，中文引号使用全角字形，内置霞鹜文楷。命令和文档支持拼音首字母搜索。推荐搭配 fcitx5 与小鹤双拼。</p>
+    <h2><span class="mk">## </span>极简专注</h2>
+    <p>界面只有正文。光标常亮不闪，写满一页时整页翻过，不滚动。专注模式下只有当前段落为黑色；<kbd>Ctrl</kbd> <kbd>.</kbd> 隐藏页眉页脚。</p>
   </div>
   <div>
-    <h2><span class="mk">## </span>纯文本存储</h2>
-    <p>文档以 <code>.md</code> 文件保存在 <code>Documents/momoda</code>，首行即标题。卸载应用不会删除文档。</p>
+    <h2><span class="mk">## </span>全键盘操作</h2>
+    <p>所有功能都能用键盘完成：常用操作有快捷键，其余都在 <kbd>Ctrl</kbd> <kbd>K</kbd> 命令面板里。可选 Vim 模式，支持常用的移动、删除和撤销。</p>
   </div>
   <div>
-    <h2><span class="mk">## </span>键盘与笔</h2>
-    <p>所有功能都能用键盘完成，也都能用笔完成。<kbd>Ctrl</kbd> <kbd>K</kbd> 打开命令面板。</p>
+    <h2><span class="mk">## </span>存储与同步</h2>
+    <p>文档以 <code>.md</code> 文件保存在 <code>Documents/momoda</code>，首行即标题，卸载应用不会删除。可选 GitHub 同步，在手机或电脑上输入验证码即可登录；两端同时修改时，两个版本都会保留。</p>
+  </div>
+  <div>
+    <h2><span class="mk">## </span>AI 助手</h2>
+    <p>支持任何 OpenAI 兼容接口，包括本地的 Ollama。润色、续写、精简、翻译，也可以自定义指令。结果确认后才写入正文。</p>
   </div>
 </section>
 
 <section class="privacy">
   <h2><span class="mk">## </span>开源与隐私</h2>
-  <p>不需要账号，不收集任何数据。AI 助手与 GitHub 同步均为可选功能，凭证只保存在本机；AI 生成的内容需要确认后才会写入正文。以 <a href="https://github.com/zhixianio/momoda/blob/main/LICENSE">GPL-3.0</a> 开源。</p>
+  <p>以 <a href="https://github.com/zhixianio/momoda/blob/main/LICENSE">GPL-3.0</a> 开源。不需要账号，不收集任何数据。API key 和 GitHub 凭证只保存在本机。</p>
 </section>
 
 <section id="download" class="download">
   <h2><span class="mk">## </span>下载</h2>
   <div class="waiting">
     <svg class="mark blinker" viewBox="31 37 46 33" aria-hidden="true"><g class="eyes"><circle cx="39.78" cy="59.33" r="7.11"/><circle cx="57.56" cy="59.33" r="7.11"/></g><rect x="70.23" y="38.89" width="4.88" height="29.33" rx="2.44"/></svg>
-    <p>当前为预览版，仍在汉王 N10 Pro 上持续调整。</p>
+    <p>预览版 0.9.0-beta.1，仍在持续调整。</p>
   </div>
   <p class="actions">
-    <a class="button" href="https://github.com/zhixianio/momoda/releases">下载 APK<span class="soon">GitHub Releases</span></a>
+    <a class="button" href="https://github.com/zhixianio/momoda/releases">下载 APK</a>
+    <span class="note">Android 8.0 及以上</span>
   </p>
-  <p class="note">需要 Android 8.0 及以上，普通 Android 平板和手机也可以使用。每个版本附带 SHA-256 校验值和签名证书指纹。</p>
 </section>
 
 </main>

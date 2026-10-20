@@ -31,14 +31,14 @@
   const countEl = demo.querySelector(".count");
 
   // “/” 是输入法一次上屏的分界，“|” 是回车分段
+  // 佛尔斯（魔术师小姐）的口吻：职业作家，能睡就不写
   const SCRIPT = [
     "# /第三章",
-    "计划/：/今晚/写完/第三章/，/一万字/。",
-    "21:00 /泡好/茶/，/先/酝酿/一下/情绪/。",
-    "21:40 /群里/在聊/诡秘之主/，/参与/了/一下/。",
-    "23:50 /又/把/诡秘之主/翻出来/重看/了/两章/。",
-    "00:30 /正文/：/0 /字/。",
-    "**/赞美/愚者/。/**/明天/一定/写/。",
+    "编辑/又/来信/催稿/了/。",
+    "先/睡个/午觉/，/灵感/也/需要/休息/。",
+    "醒来/，/休/坐在/对面/，/脸色/比/编辑/还/难看/。",
+    "“/今天/写不完/，/晚饭/就/别吃/了/。/”",
+    "**/赞美/愚者/。/**/保佑/我/今天/能/写完/。",
   ];
 
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -102,19 +102,19 @@
   function steps() {
     const out = [];
     SCRIPT.forEach((para, pi) => {
-      if (pi > 0) out.push(["\n\n", 380]);
+      if (pi > 0) out.push(["\n\n", 200]);
       for (const piece of para.split("/")) {
         // 英文、数字和 Markdown 标记不经过输入法，一个键一个键地出现
         if (/^[\x20-\x7e]+$/.test(piece)) {
-          [...piece].forEach((ch, i) => out.push([ch, i === piece.length - 1 ? 260 : 120]));
+          [...piece].forEach((ch, i) => out.push([ch, i === piece.length - 1 ? 140 : 70]));
           continue;
         }
         let wait;
-        if (/^[，。、“”]$/.test(piece)) wait = piece === "。" ? 520 : 240;
-        else wait = 260 + piece.length * 110 + Math.random() * 260;
+        if (/^[，。、“”]$/.test(piece)) wait = piece === "。" ? 260 : 120;
+        else wait = 120 + piece.length * 55 + Math.random() * 120;
         out.push([piece, wait]);
       }
-      out.push(["", 1700]);   // 一段写完，停下来想一想
+      out.push(["", 800]);    // 一段写完，停一下
     });
     return out;
   }
@@ -134,7 +134,7 @@
   function tick() {
     if (!running) return;
     if (!queue.length) {
-      timer = setTimeout(() => { reset(); tick(); }, 5200);
+      timer = setTimeout(() => { reset(); tick(); }, 4000);
       return;
     }
     const [piece, wait] = queue.shift();
@@ -143,7 +143,7 @@
       render(buf);
       // 字数和保存状态在停笔后才更新，不跟着每个字刷新
       clearTimeout(countTimer);
-      countTimer = setTimeout(() => { countEl.textContent = `${count(buf)} 字 · 已保存`; }, 1200);
+      countTimer = setTimeout(() => { countEl.textContent = `${count(buf)} 字 · 已保存`; }, 700);
     }
     timer = setTimeout(tick, wait);
   }
