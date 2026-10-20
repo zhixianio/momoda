@@ -36,6 +36,8 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
             // 不能等输入法“放行”Esc 再切换：汉王输入法会吞掉所有 Esc，fcitx5 有联想时也会吞一次。
             if (keyCode == KeyEvent.KEYCODE_ESCAPE && event.action == KeyEvent.ACTION_DOWN) {
                 setMode(Mode.NORMAL)
+                // 和 vim 一样，回到 normal 时光标退一格，停在刚打的最后一个字上（行首除外）
+                if (cursor > 0 && text[cursor - 1] != '\n') move(cursor - 1)
                 // 把输入法内部可能残留的拼音缓冲清掉，免得回到 insert 时接着拼
                 editor.post { imm.restartInput(editor) }
             }
@@ -73,9 +75,11 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
             ch == 'a' -> { move(cursor + 1); setMode(Mode.INSERT) }
             ch == 'A' -> { move(paragraphEnd(cursor)); setMode(Mode.INSERT) }
             ch == 'I' -> { move(paragraphStart(cursor)); setMode(Mode.INSERT) }
-            ch == 'o' -> { val e = paragraphEnd(cursor); text.insert(e, "\n"); move(e + 1); setMode(Mode.INSERT) }
-            ch == 'O' -> { val s = paragraphStart(cursor); text.insert(s, "\n"); move(s); setMode(Mode.INSERT) }
+            // 新起的是一段（和回车一样空一行）：只插一个换行的话，新行会被当成段距空行压扁
+            ch == 'o' -> { val e = paragraphEnd(cursor); text.insert(e, "\n\n"); move(e + 2); setMode(Mode.INSERT) }
+            ch == 'O' -> { val s = paragraphStart(cursor); text.insert(s, "\n\n"); move(s); setMode(Mode.INSERT) }
         }
+        if (mode == Mode.NORMAL) stayOnChar()
         return true
     }
 
@@ -93,6 +97,12 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
     private fun move(offset: Int) = editor.setSelection(offset.coerceIn(0, text.length))
 
     /** 左右移一个字符；落到段距空行上就再移一个（那一行只有 1/4 行高，不是能写字的地方）。 */
+    /** normal 模式下光标停在字上，不停在行尾之后（空行除外），和 vim 一样。 */
+    private fun stayOnChar() {
+        val c = cursor
+        if (c > 0 && (c == text.length || text[c] == '\n') && text[c - 1] != '\n') move(c - 1)
+    }
+
     private fun moveChar(delta: Int) {
         move(cursor + delta)
         if (editor.onParagraphGap()) move(cursor + delta)

@@ -285,6 +285,29 @@ class EditorView(context: Context) : EditText(context) {
      * 上下移动后光标落在段距空行上（只有 1/4 行高，光标画在那里看起来飘在两段之间）：再往同一方向移一行。
      * [x] 是移动前光标的横坐标，尽量保持在同一列。
      */
+    private var lastCursor = 0
+
+    /**
+     * 光标不停在段距空行上：那一行只有 1/4 行高，是“回车空一行”在屏幕上的样子，不是能写字的地方。
+     * 不管是方向键、vim、笔点还是删除让光标落到这里，都按移动方向挪到相邻的文字行：
+     * 往前（往上、往左）挪到上一段末尾，往后挪到下一段开头。
+     */
+    private val gapGuard = Runnable {
+        val s = selectionStart
+        val t = text
+        if (s < 0 || s != selectionEnd || t == null) return@Runnable
+        if (BaseInputConnection.getComposingSpanStart(t) >= 0) { lastCursor = s; return@Runnable }
+        val l = layout ?: return@Runnable
+        if (onParagraphGap()) {
+            val start = l.getLineStart(l.getLineForOffset(s))
+            val target = if (s < lastCursor) start - 1 else start + 1
+            lastCursor = target.coerceIn(0, t.length)
+            setSelection(lastCursor)
+        } else {
+            lastCursor = s
+        }
+    }
+
     /** 光标是不是停在段距空行上。 */
     fun onParagraphGap(): Boolean {
         val l = layout ?: return false
@@ -315,6 +338,9 @@ class EditorView(context: Context) : EditText(context) {
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
         if (!ready) return
+        // 等这一轮编辑（含分段规则补的那个换行）做完再检查，不在中途挪光标
+        removeCallbacks(gapGuard)
+        post(gapGuard)
         onSelectionChange?.invoke(selStart, selEnd)
         browsing = false
         updateFocus()
