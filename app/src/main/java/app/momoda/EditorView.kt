@@ -176,9 +176,16 @@ class EditorView(context: Context) : EditText(context) {
         if (width == 0) return
         val column = paint.measureText("中") * charsPerLine
         val side = max(dp(40).toFloat(), (width - column) / 2f).toInt()
-        // 底部留出约 1/3 屏的空白，最后一行也能被翻到屏幕中上部，不会被输入法的候选栏挡住
-        setPadding(side, dp(40), side, max(dp(56), height / 3))
+        // 底部内边距不能大：TextView 不在内边距里画字，大了下面那块就永远是空白，像文档已经到头。
+        // “光标别写到最底下”和“文末能翻到屏幕上部”分别由 [writingMargin] 和 [overscroll] 负责。
+        setPadding(side, dp(40), side, dp(40))
     }
+
+    /** 光标进入屏幕底部这一段就翻页：留给输入法候选栏，也让视线停在中上部。 */
+    private val writingMargin get() = max(dp(56), height / 4)
+
+    /** 文末之后还能再往下翻这么多，最后几行可以停在屏幕中上部。 */
+    private val overscroll get() = height / 3
 
     // ---------- 分段与列表规则 ----------
 
@@ -261,7 +268,28 @@ class EditorView(context: Context) : EditText(context) {
             KeyEvent.KEYCODE_PAGE_DOWN -> { page(+1, 1f); return true }
             KeyEvent.KEYCODE_PAGE_UP -> { page(-1, 1f); return true }
         }
-        return postImeKeyHandler?.invoke(keyCode, event) == true || super.onKeyDown(keyCode, event)
+        val vertical = (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) &&
+            !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed
+        val x = if (vertical) layout?.let { it.getPrimaryHorizontal(selectionStart.coerceAtLeast(0)) } ?: 0f else 0f
+        val handled = postImeKeyHandler?.invoke(keyCode, event) == true || super.onKeyDown(keyCode, event)
+        if (handled && vertical) skipParagraphGap(if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) +1 else -1, x)
+        return handled
+    }
+
+    /**
+     * 上下移动后光标落在段距空行上（只有 1/4 行高，光标画在那里看起来飘在两段之间）：再往同一方向移一行。
+     * [x] 是移动前光标的横坐标，尽量保持在同一列。
+     */
+    fun skipParagraphGap(direction: Int, x: Float) {
+        val l = layout ?: return
+        val t = text ?: return
+        val s = selectionStart
+        if (s < 0 || s != selectionEnd) return
+        val line = l.getLineForOffset(s)
+        if (!BlankLineSpacing.isParagraphGap(t, l.getLineStart(line), l.getLineEnd(line))) return
+        val target = line + direction
+        if (target !in 0 until l.lineCount) return
+        setSelection(l.getOffsetForHorizontal(target, x))
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
@@ -349,7 +377,7 @@ class EditorView(context: Context) : EditText(context) {
         val line = l.getLineForOffset(selectionEnd.coerceAtLeast(0))
         val top = l.getLineTop(line) + extendedPaddingTop
         val bottom = l.getLineBottom(line) + extendedPaddingTop
-        val writableBottom = scrollY + height - extendedPaddingBottom
+        val writableBottom = scrollY + height - writingMargin
         val tooLow = bottom > writableBottom - lineHeight
         val tooHigh = top < scrollY + extendedPaddingTop
         if (tooLow || tooHigh) {
@@ -364,7 +392,7 @@ class EditorView(context: Context) : EditText(context) {
         val l = layout ?: return
         val visible = height - extendedPaddingTop - extendedPaddingBottom
         val step = ((visible - 2 * lineHeight) * fraction).toInt().coerceAtLeast(lineHeight)
-        val maxScroll = max(0, l.height + extendedPaddingTop + extendedPaddingBottom - height)
+        val maxScroll = max(0, l.height + extendedPaddingTop + extendedPaddingBottom + overscroll - height)
         var target = (scrollY + direction * step).coerceIn(0, maxScroll)
         // 对齐到行首，避免顶端出现半行字（翻到文末时也要对齐，只会往回退，不会超出）
         if (target > 0) {
@@ -440,8 +468,14 @@ class EditorView(context: Context) : EditText(context) {
         val line = l.getLineForOffset(start)
         val x = compoundPaddingLeft + l.getPrimaryHorizontal(start)
         val baseline = (extendedPaddingTop + l.getLineBaseline(line)).toFloat()
-        val top = baseline + paint.ascent()
-        val bottom = baseline + paint.descent()
+        var top = baseline + paint.ascent()
+        var bottom = baseline + paint.descent()
+        val t0 = text
+        if (t0 != null && BlankLineSpacing.isParagraphGap(t0, l.getLineStart(line), l.getLineEnd(line))) {
+            // 段距空行只有 1/4 行高：光标按这一行的实际高度画，不伸进上下两段的文字里
+            top = (extendedPaddingTop + l.getLineTop(line)).toFloat()
+            bottom = (extendedPaddingTop + l.getLineBottom(line)).toFloat()
+        }
         val t = text
         if (blockCursor) {
             val ch = if (start < t.length && t[start] != '\n') t[start].toString() else null

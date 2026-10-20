@@ -95,7 +95,9 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
         val line = l.getLineForOffset(cursor)
         val target = (line + delta).coerceIn(0, l.lineCount - 1)
         if (target == line) return
-        move(l.getOffsetForHorizontal(target, l.getPrimaryHorizontal(cursor)))
+        val x = l.getPrimaryHorizontal(cursor)
+        move(l.getOffsetForHorizontal(target, x))
+        editor.skipParagraphGap(delta, x)
     }
 
     private fun lineEndExclusiveNewline(line: Int): Int {
