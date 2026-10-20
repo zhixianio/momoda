@@ -61,7 +61,20 @@ class EditorView(context: Context) : EditText(context) {
     var onLatency: ((Long) -> Unit)? = null
 
     private val cursorPaint = Paint().apply { color = Color.BLACK }
-    private val invertedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val invertPaint = Paint().apply {
+        color = Color.WHITE
+        if (Build.VERSION.SDK_INT >= 29) blendMode = android.graphics.BlendMode.DIFFERENCE
+    }
+    private val styledPaint = android.text.TextPaint(Paint.ANTI_ALIAS_FLAG)
+
+    /** [i] 处那个字实际用的画笔：正文画笔加上这里的字号、字体样式（标题、粗体等）。 */
+    private fun styledPaintAt(t: CharSequence, i: Int): android.text.TextPaint {
+        styledPaint.set(paint)
+        if (t is Spanned && i < t.length) {
+            for (span in t.getSpans(i, i + 1, android.text.style.MetricAffectingSpan::class.java)) span.updateMeasureState(styledPaint)
+        }
+        return styledPaint
+    }
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xAA, 0xAA, 0xAA) }
     private val spacing = BlankLineSpacing()
 
@@ -98,7 +111,6 @@ class EditorView(context: Context) : EditText(context) {
     fun setFont(typeface: Typeface) {
         if (typeface === this.typeface) return
         this.typeface = typeface
-        invertedPaint.typeface = typeface
         hintPaint.typeface = typeface
         updatePadding()
         restyleAll()
@@ -578,11 +590,19 @@ class EditorView(context: Context) : EditText(context) {
         val t = text
         if (blockCursor) {
             val ch = if (start < t.length && t[start] != '\n') t[start].toString() else null
-            val w = ch?.let { paint.measureText(it) } ?: (textSize * 0.6f)
-            canvas.drawRect(x, top, x + w, bottom, cursorPaint)
-            if (ch != null) {
-                invertedPaint.textSize = textSize
-                canvas.drawText(ch, x, baseline, invertedPaint)
+            // 按这个字实际的样式量宽高：标题是大号粗体，不能按正文的字号画
+            val sp = styledPaintAt(t, start)
+            val w = ch?.let { sp.measureText(it) } ?: (textSize * 0.6f)
+            if (ch != null) { top = baseline + sp.ascent(); bottom = baseline + sp.descent() }
+            if (Build.VERSION.SDK_INT >= 29) {
+                // 把已经画好的字反色：样式（标题、粗体、淡显的标记）原样保留，只是黑白对调
+                canvas.drawRect(x, top, x + w, bottom, invertPaint)
+            } else {
+                canvas.drawRect(x, top, x + w, bottom, cursorPaint)
+                if (ch != null) {
+                    sp.color = Color.WHITE
+                    canvas.drawText(ch, x, baseline, sp)
+                }
             }
         } else {
             canvas.drawRect(x, top, x + dp(2), bottom, cursorPaint)
