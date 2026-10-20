@@ -83,6 +83,8 @@ class DocStore(private val context: Context) {
      * 没有标题时保持原名；已经是“标题 2.md”这种带序号的名字时也不再变动。
      */
     fun syncNameWithTitle(file: File, text: String): File {
+        // AI 指令表的文件名是固定的，不能跟着标题改名
+        if (file.name == Prompts.FILE_NAME) return file
         val current = file.nameWithoutExtension
         val desired = Titles.baseNameFor(Titles.titleOf(text), current)
         if (current == desired || current.matches(Regex(Regex.escape(desired) + " \\d+"))) return file

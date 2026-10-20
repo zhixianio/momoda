@@ -56,6 +56,7 @@ class MainActivity : Activity() {
 
     private val ui by lazy { getSharedPreferences("ui", Context.MODE_PRIVATE) }
     private val settings by lazy { UserSettings(this) }
+    private val llm by lazy { LlmSettings(this) }
     private val fonts by lazy { Fonts(assets) { store.dir } }
     private val updates by lazy {
         // debug 包可以用 `--es updateApi <url>` 指向本地模拟的发布地址做测试
@@ -485,6 +486,7 @@ class MainActivity : Activity() {
             }
             keyCode == KeyEvent.KEYCODE_PERIOD -> { toggleZen(); "zen" }
             keyCode == KeyEvent.KEYCODE_COMMA -> { showSettings(); "设置" }
+            keyCode == KeyEvent.KEYCODE_J && !shift -> { showAi(); "AI" }
             keyCode == KeyEvent.KEYCODE_EQUALS || keyCode == KeyEvent.KEYCODE_PLUS -> { changeTextSize(+1f); "字号+" }
             keyCode == KeyEvent.KEYCODE_MINUS -> { changeTextSize(-1f); "字号-" }
             keyCode == KeyEvent.KEYCODE_D && shift -> { toggleDebug(); "调试面板" }
@@ -522,6 +524,9 @@ class MainActivity : Activity() {
         add(Command("rename", "修改标题", "", ::renameTitle))
         add(Command("manage", "管理文档", "回收站、排序、批量查看", ::showManager))
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
+        add(Command("ai", "AI 助手", "Ctrl+J", ::showAi))
+        add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "未配置", ::showAiConfig))
+        add(Command("ai-prompts", "编辑 AI 指令", Prompts.FILE_NAME, ::editPrompts))
         add(Command("zen", "Zen 模式", "Ctrl+.", ::toggleZen))
         add(Command("focus", "专注模式开关", "Ctrl+Shift+F", ::toggleFocus))
         add(Command("bigger", "字号放大", "Ctrl+=") { changeTextSize(+1f) })
@@ -682,6 +687,72 @@ class MainActivity : Activity() {
         runCatching { Diagnostics.export(this, store.dir, desc) }
             .onSuccess { toast("已导出：${it.absolutePath.removePrefix("/storage/emulated/0/")}") }
             .onFailure { toast("导出失败：${it.message}") }
+    }
+
+    // ---------- AI（DESIGN §6） ----------
+
+    private fun promptsFile(): File = File(store.dir, Prompts.FILE_NAME).apply {
+        if (!exists()) writeText(Prompts.DEFAULT)
+    }
+
+    private fun editPrompts() = open(promptsFile())
+
+    private fun showAiConfig() {
+        save()
+        AiConfigPanel(this, font, llm, onDismiss = ::returnToEditor).show()
+    }
+
+    /** Ctrl+J：选指令 → 对选区（没有选区时是光标所在段落）调用模型 → 结果面板里确认。 */
+    private fun showAi() {
+        if (!llm.config.configured) {
+            toast("先填写 AI 接口地址和模型")
+            showAiConfig()
+            return
+        }
+        save()
+        val prompts = Prompts.parse(promptsFile().readText())
+        if (prompts.isEmpty()) { toast("prompts.md 里没有指令，用“## 名称”开头写一条"); editPrompts(); return }
+
+        val t = editor.text
+        val selStart = minOf(editor.selectionStart, editor.selectionEnd).coerceAtLeast(0)
+        val selEnd = maxOf(editor.selectionStart, editor.selectionEnd).coerceAtLeast(0)
+        val hasSelection = selEnd > selStart
+        // 没有选区时作用于光标所在的段落
+        var start = selStart
+        var end = selEnd
+        if (!hasSelection) {
+            while (start > 0 && t[start - 1] != '\n') start--
+            while (end < t.length && t[end] != '\n') end++
+        }
+        val target = t.subSequence(start, end).toString()
+        val context = t.subSequence((selEnd - 2000).coerceAtLeast(0), selEnd).toString()
+
+        val items = prompts.map { InkItem(it.name, if (it.insert) "插入" else "替换") }
+        InkList.show(this, "AI · ${llm.model}", items, font, onDismiss = ::returnToEditor) { i ->
+            val p = prompts[i]
+            if (target.isBlank() && !p.insert) { toast("光标所在段落是空的，先选中要处理的文字"); return@show }
+            val user = Prompts.render(p, target, context)
+            val cfg = llm.config
+            handler.post {
+                AiResultPanel(
+                    this, font, "${p.name} · ${cfg.model}", p.insert,
+                    run = { call, onDelta -> Llm.stream(cfg, Prompts.SYSTEM, user, call, onDelta) },
+                    onReplace = { result ->
+                        if (editor.text.subSequence(start, end).toString() == target) {
+                            editor.text.replace(start, end, result)
+                            editor.setSelection((start + result.length).coerceAtMost(editor.text.length))
+                        } else toast("原文已经变了，没有替换")
+                    },
+                    onInsert = { result ->
+                        val at = end.coerceAtMost(editor.text.length)
+                        val insert = if (hasSelection) result else "\n\n$result"
+                        editor.text.insert(at, insert)
+                        editor.setSelection((at + insert.length).coerceAtMost(editor.text.length))
+                    },
+                    onDismiss = ::returnToEditor,
+                ).show()
+            }
+        }
     }
 
     // ---------- 更新 ----------

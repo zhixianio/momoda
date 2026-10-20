@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AI 接口由用户自己填写，经 Tailscale 接入的家庭节点通常是明文 HTTP（如 http://100.x.x.x:11434/v1），
+  所以允许明文流量。App 只会连接用户配置的 AI 地址和 GitHub。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

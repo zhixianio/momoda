@@ -47,4 +47,6 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    // 单测在 JVM 上跑，android.jar 里的 org.json 只是空壳，换成真实实现
+    testImplementation("org.json:json:20240303")
 }
