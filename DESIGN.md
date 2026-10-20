@@ -1,4 +1,4 @@
-# 墨墨打 momoda · 设计稿 v0.9
+# 墨墨打 momoda · 设计稿 v1.0
 
 > 为 Android 墨水屏设计、为中文优化的沉浸式写作应用。即开即打，键盘和笔都能完整操作。
 > 参考气质：Bear 的干净 Markdown 渲染 + iA Writer 的专注模式。
@@ -217,7 +217,7 @@ Documents/momoda/
 
 ## 5. AI · A：GitHub 同步（agent 通过仓库协作）
 
-> **v1 暂不实现**，先把打字体验做好。这里只留出口子：存储是纯 `.md` 文件，目录可以直接 `git init`；命令面板预留“同步”命令位；`_agent/` 目录约定保留。以下内容为后续版本的设计草案。
+> ✅ **已实现（提前于 v1 完成）**，用法见 docs/M3.md。实现上没有用 JGit，而是直接调用 GitHub 的 Git Data API，设备上不放完整 git；冲突规则与下面一致。`Ctrl+Shift+A` 并排查看 agent 文件还没做。
 
 - 认证：MVP 用 **fine-grained PAT**，只授权一个仓库，在设置页粘贴；后续再加 OAuth Device Flow。
 - 同步：使用 JGit，在空闲 N 分钟后、退出时或手动执行（命令面板中的“同步”）时，自动 commit → pull --rebase → push。
@@ -228,6 +228,8 @@ Documents/momoda/
   3. 万一正文仍然冲突：保留本地版本，远端版本另存为 `xxx.remote-<时间>.md`，并在状态栏提示。**绝不静默丢弃任何一方的内容。**
 
 ## 6. AI · C：设备内调用 LLM（OpenAI 兼容）
+
+> ✅ **已实现（提前于 v1.2 完成）**，用法见 docs/M3.md。自定义指令放在 `Documents/momoda/prompts.md`；API key 用 Android Keystore 加密（不依赖 AndroidX 的 EncryptedSharedPreferences）。
 
 - 配置项：`base_url`、`api_key`（可为空）、`model`，支持保存多个配置并切换。
 - 兼容 OpenAI、OpenRouter、Ollama、LM Studio、vLLM 等。家里自建的节点通过 Tailscale 接入，App 只需填写 `http://100.x.x.x:11434/v1` 这样的地址，不需要做任何特殊处理。
@@ -253,8 +255,8 @@ Documents/momoda/
 | **M1 能写** ✅ | 编辑器（分段、列表延续、翻页、光标不闪、断行策略）、`Documents/momoda` 存储、首行标题与自动改名、快速切换、命令面板（拼音搜索）、页眉页脚 |
 | **M2 好写** 🔨 | Markdown 淡显渲染 ✅、专注模式 ✅、中文引号 ✅、设置页 ✅、外部字体 ✅、文档管理页与回收站 ✅、检查更新 ✅（待填发布地址）；接下来在真机上反复打磨 → **发布 v1.0** |
 | v1.1 | 完整 vim、打字机滚动实验、App 内下载字体 |
-| v1.2 | AI（OpenAI 兼容调用） |
-| v2 | GitHub 同步与 agent 协作 |
+| v1.2 | AI（OpenAI 兼容调用）✅ 已提前完成，待接真实模型验证 |
+| v2 | GitHub 同步 ✅ 已提前完成，待接真实仓库验证；agent 文件并排查看待做 |
 
 ## 8.1 后续可能做：App 内嵌输入法引擎
 
