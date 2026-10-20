@@ -2,7 +2,6 @@ package app.momoda
 
 import android.content.Context
 import android.os.Build
-import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -10,6 +9,7 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
+import java.util.Base64
 import java.util.Date
 import java.util.Locale
 
@@ -55,6 +55,9 @@ class SyncSettings(context: Context) {
         set(v) = prefs.edit().putString("clientId", v.trim()).apply()
 
     val configured get() = repo.matches(Regex("[^/\\s]+/[^/\\s]+")) && token.isNotBlank()
+
+    /** 此刻的配置。一次同步从头到尾只用这一份，中途改设置不会让它写到别的仓库或目录。 */
+    fun target() = GitHubSync.Target(apiBase, repo, branch, subdir, token)
 }
 
 /**
@@ -68,11 +71,23 @@ class SyncSettings(context: Context) {
  * 可以只同步到仓库里的某个子目录（[SyncSettings.subdir]），子目录以外的文件不会被读取或改动。
  */
 class GitHubSync(
-    private val settings: SyncSettings,
+    private val target: Target,
     private val dir: File,
     private val stateFile: File,
     private val moveToTrash: (File) -> Unit,
+    private val client: Api = HttpApi(target),
+    private val device: () -> String = { "${Build.MANUFACTURER} ${Build.MODEL}" },
 ) {
+    /** 同步的目标。token 不出现在 toString 里，以免被写进日志。 */
+    class Target(val apiBase: String, val repo: String, val branch: String, val subdir: String, val token: String) {
+        override fun toString() = "$apiBase|$repo|$branch|$subdir"
+    }
+
+    /** GitHub REST API：返回 JSON；出错时抛 [HttpError]。单测里换成模拟的仓库。 */
+    fun interface Api {
+        fun call(method: String, path: String, body: JSONObject?): JSONObject
+    }
+
     data class Result(val uploaded: Int, val downloaded: Int, val deleted: Int, val trashed: Int, val conflicts: List<String>) {
         val changedLocal get() = downloaded + trashed + conflicts.size > 0
         fun summary() = buildString {
@@ -100,9 +115,9 @@ class GitHubSync(
     }
 
     private fun once(): Result {
-        val (owner, name) = settings.repo.split('/', limit = 2)
+        val (owner, name) = target.repo.split('/', limit = 2)
         val repoPath = "/repos/$owner/$name"
-        val branch = settings.branch
+        val branch = target.branch
 
         // 1. 远端：分支最新提交 → 文件树
         val ref = try {
@@ -158,7 +173,7 @@ class GitHubSync(
         val remoteAfter = HashMap(remote)
         if (treeEntries.length() > 0) {
             val newTree = api("POST", "$repoPath/git/trees", JSONObject().put("base_tree", treeSha).put("tree", treeEntries)).getString("sha")
-            val message = "墨墨打同步：${if (uploaded > 0) "更新 $uploaded 篇" else ""}${if (uploaded > 0 && deleted > 0) "，" else ""}${if (deleted > 0) "删除 $deleted 篇" else ""}\n\n来自 ${Build.MANUFACTURER} ${Build.MODEL}"
+            val message = "墨墨打同步：${if (uploaded > 0) "更新 $uploaded 篇" else ""}${if (uploaded > 0 && deleted > 0) "，" else ""}${if (deleted > 0) "删除 $deleted 篇" else ""}\n\n来自 ${device()}"
             val commit = api("POST", "$repoPath/git/commits", JSONObject()
                 .put("message", message).put("tree", newTree).put("parents", JSONArray().put(headSha))).getString("sha")
             try {
@@ -185,16 +200,16 @@ class GitHubSync(
 
     /** 读取 GitHub 仓库信息，用于“测试连接”：返回能否写入。 */
     fun check(): String {
-        val (owner, name) = settings.repo.split('/', limit = 2)
+        val (owner, name) = target.repo.split('/', limit = 2)
         val r = api("GET", "/repos/$owner/$name")
         val push = r.optJSONObject("permissions")?.optBoolean("push") ?: false
         return if (push) "连接成功：${r.optString("full_name")}（可以写入）" else "能读取 ${r.optString("full_name")}，但没有写入权限：请给 token 加上 Contents 的 Read and write"
     }
 
-    private fun stateKey() = "${settings.apiBase}|${settings.repo}|${settings.branch}|${settings.subdir}"
+    private fun stateKey() = "${target.apiBase}|${target.repo}|${target.branch}|${target.subdir}"
 
     /** 子目录前缀，例如 `notes/momoda/`；根目录时为空。 */
-    private val prefix get() = settings.subdir.let { if (it.isEmpty()) "" else "$it/" }
+    private val prefix = target.subdir.let { if (it.isEmpty()) "" else "$it/" }
 
     private fun inScope(path: String): Boolean =
         path.endsWith(".md") && path.split('/').none { it.startsWith(".") } && !path.startsWith("fonts/")
@@ -222,13 +237,13 @@ class GitHubSync(
     private fun uploadEntry(repoPath: String, path: String): JSONObject {
         val bytes = File(dir, path).readBytes()
         val sha = api("POST", "$repoPath/git/blobs", JSONObject()
-            .put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64")).getString("sha")
+            .put("content", Base64.getEncoder().encodeToString(bytes)).put("encoding", "base64")).getString("sha")
         return JSONObject().put("path", prefix + path).put("mode", "100644").put("type", "blob").put("sha", sha)
     }
 
     private fun blob(repoPath: String, sha: String): ByteArray {
         val r = api("GET", "$repoPath/git/blobs/$sha")
-        return Base64.decode(r.getString("content").replace("\n", ""), Base64.DEFAULT)
+        return Base64.getMimeDecoder().decode(r.getString("content"))
     }
 
     private fun loadState(): JSONObject = runCatching { JSONObject(stateFile.readText()) }.getOrDefault(JSONObject())
@@ -242,36 +257,40 @@ class GitHubSync(
 
     class HttpError(val code: Int, message: String) : Exception(message)
 
-    private fun api(method: String, path: String, body: JSONObject? = null): JSONObject {
-        val conn = (URL(settings.apiBase.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
-            // Android 的 HttpURLConnection（基于 OkHttp）支持 PATCH，更新分支引用要用它
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-            setRequestProperty("Authorization", "Bearer ${settings.token}")
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
+    private fun api(method: String, path: String, body: JSONObject? = null): JSONObject = client.call(method, path, body)
+
+    private class HttpApi(private val target: Target) : Api {
+        override fun call(method: String, path: String, body: JSONObject?): JSONObject {
+            val conn = (URL(target.apiBase.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+                // Android 的 HttpURLConnection（基于 OkHttp）支持 PATCH，更新分支引用要用它
+                requestMethod = method
+                connectTimeout = 15_000
+                readTimeout = 30_000
+                setRequestProperty("Accept", "application/vnd.github+json")
+                setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+                setRequestProperty("Authorization", "Bearer ${target.token}")
+                if (body != null) {
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                }
             }
-        }
-        try {
-            if (body != null) conn.outputStream.use { it.write(body.toString().toByteArray()) }
-            val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) {
-                val msg = runCatching { JSONObject(text).optString("message") }.getOrNull().orEmpty().ifEmpty { text.take(200) }
-                throw HttpError(code, when (code) {
-                    401 -> "token 无效或已过期"
-                    403 -> "没有权限（$msg）"
-                    404 -> "找不到仓库 ${settings.repo}，或 token 没有访问它的权限"
-                    else -> "GitHub 返回 $code：$msg"
-                })
+            try {
+                if (body != null) conn.outputStream.use { it.write(body.toString().toByteArray()) }
+                val code = conn.responseCode
+                val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (code !in 200..299) {
+                    val msg = runCatching { JSONObject(text).optString("message") }.getOrNull().orEmpty().ifEmpty { text.take(200) }
+                    throw HttpError(code, when (code) {
+                        401 -> "token 无效或已过期"
+                        403 -> "没有权限（$msg）"
+                        404 -> "找不到仓库 ${target.repo}，或 token 没有访问它的权限"
+                        else -> "GitHub 返回 $code：$msg"
+                    })
+                }
+                return if (text.isBlank()) JSONObject() else JSONObject(text)
+            } finally {
+                conn.disconnect()
             }
-            return if (text.isBlank()) JSONObject() else JSONObject(text)
-        } finally {
-            conn.disconnect()
         }
     }
 }

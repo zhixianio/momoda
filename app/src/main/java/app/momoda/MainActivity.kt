@@ -801,7 +801,7 @@ class MainActivity : Activity() {
 
     // ---------- GitHub 同步（DESIGN §5） ----------
 
-    private fun makeSync() = GitHubSync(sync, store.dir, File(filesDir, "sync-state.json")) { f -> store.moveToTrash(f) }
+    private fun makeSync() = GitHubSync(sync.target(), store.dir, File(filesDir, "sync-state.json"), moveToTrash = { f -> store.moveToTrash(f) })
 
     private fun showSyncConfig() {
         save()
