@@ -1,0 +1,5 @@
+# 墨墨打提供的实体键盘布局：在系统默认布局之上，互换 CapsLock（扫描码 58）和左 Ctrl（扫描码 29）。
+type OVERLAY
+
+map key 58 CTRL_LEFT
+map key 29 CAPS_LOCK

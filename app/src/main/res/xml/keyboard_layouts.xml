@@ -5,4 +5,8 @@
         android:name="caps_as_ctrl"
         android:label="@string/keyboard_layout_caps_ctrl"
         android:keyboardLayout="@raw/keyboard_layout_caps_ctrl" />
+    <keyboard-layout
+        android:name="caps_ctrl_swap"
+        android:label="@string/keyboard_layout_caps_ctrl_swap"
+        android:keyboardLayout="@raw/keyboard_layout_caps_ctrl_swap" />
 </keyboard-layouts>
