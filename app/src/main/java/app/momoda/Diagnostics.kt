@@ -18,6 +18,8 @@ import java.util.Locale
  * - 启动时读取系统记录的上次退出原因（崩溃、ANR、被杀），只保留最近几条；
  * - 命令面板“导出诊断信息”把这些连同版本、设备、设置写成一个文本文件，放在文档目录里，
  *   用户可以自己拷出来发给开发者。不包含任何文档内容。
+ *
+ * 异常信息（message）可能带着正文片段（例如解析失败的数字、AI 返回的 JSON），只记异常类名和调用栈。
  */
 object Diagnostics {
 
@@ -35,7 +37,7 @@ object Diagnostics {
             runCatching {
                 val sw = StringWriter()
                 error.printStackTrace(PrintWriter(sw))
-                write(app, "crash", "线程：${thread.name}\n时间：$stamp\n\n$sw")
+                write(app, "crash", "线程：${thread.name}\n时间：$stamp\n\n${redact(sw.toString())}")
             }
             previous?.uncaughtException(thread, error)
         }
@@ -57,8 +59,11 @@ object Diagnostics {
                     ApplicationExitInfo.REASON_LOW_MEMORY -> "lowmem"
                     else -> continue
                 }
-                val trace = runCatching { r.traceInputStream?.bufferedReader()?.use { it.readText().take(20_000) } }.getOrNull()
-                write(context, kind, "时间：${Date(r.timestamp)}\n原因：${r.description ?: r.reason}\n\n${trace ?: ""}")
+                // 只留 ANR 的线程栈；崩溃的描述里有异常信息，native 崩溃的记录里有内存内容，都可能带着正文
+                val trace = if (kind != "anr") null
+                    else runCatching { r.traceInputStream?.bufferedReader()?.use { it.readText().take(20_000) } }.getOrNull()
+                val reason = if (kind == "anr") r.description ?: "${r.reason}" else (r.description?.substringBefore(':') ?: "${r.reason}")
+                write(context, kind, "时间：${Date(r.timestamp)}\n原因：$reason\n\n${trace ?: ""}")
             }
             reasons.maxOfOrNull { it.timestamp }?.let { prefs.edit().putLong("lastExitSeen", it).apply() }
         }.onFailure { Log.w("momoda", "读取退出原因失败", it) }
@@ -87,10 +92,28 @@ object Diagnostics {
             appendLine("最近的异常记录（${logs.size} 条）：")
             for (f in logs) {
                 appendLine("──── ${f.name}")
-                appendLine(f.readText())
+                // 0.9.0-beta.1 写的崩溃记录里还有异常信息，导出时一并隐去
+                appendLine(if (f.name.startsWith("crash-")) redact(f.readText()) else f.readText())
             }
         }
         val name = "momoda-诊断-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.CHINA).format(Date())}.txt"
         return File(outDir, name).apply { writeText(report) }
     }
+
+    private val frame = Regex("^\\s+(at [\\w$.<>/@-]+\\(.*\\)|\\.\\.\\. \\d+ more)$")
+    private val header = Regex("^(\\s*(?:Caused by: |Suppressed: )?)([A-Za-z_$][\\w$]*(?:\\.[\\w$]+)*(?:Exception|Error|Throwable))(:.*)?$")
+
+    /**
+     * 调用栈去掉异常信息：保留调用栈行、异常类名和我们自己写的“线程：”“时间：”，
+     * 其余的行（异常信息，包括它的续行）都去掉。
+     */
+    fun redact(trace: String): String = trace.lines().mapNotNull { line ->
+        when {
+            line.isBlank() || line.startsWith("线程：") || line.startsWith("时间：") || line.startsWith("原因：") -> line
+            frame.matches(line) -> line
+            else -> header.matchEntire(line)?.let { m ->
+                m.groupValues[1] + m.groupValues[2] + if (m.groupValues[3].isEmpty()) "" else ": （异常信息已隐去）"
+            }
+        }
+    }.joinToString("\n")
 }
