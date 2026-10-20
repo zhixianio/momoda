@@ -910,10 +910,18 @@ class MainActivity : Activity() {
             val r = runCatching { auth.repositories(token) }
             handler.post {
                 r.onSuccess { repos ->
-                    if (repos.isEmpty()) toast("还没有可访问的仓库：在 GitHub 上把墨墨打装到你的仓库（${installUrl().removePrefix("https://")}）")
-                    else InkList.show(this, "选择仓库（${repos.size}）", repos.map { InkItem(it, if (it == sync.repo) "当前" else "") }, font) { i ->
-                        onPicked(repos[i])
+                    // 最后一项去 GitHub 上让墨墨打访问更多仓库，加好后回到这个列表（不用重新登录）
+                    fun show(list: List<String>) {
+                        val items = list.map { InkItem(it, if (it == sync.repo) "当前" else "") } +
+                            InkItem("让墨墨打访问其他仓库…", "在手机或电脑上添加")
+                        InkList.show(this, "选择仓库（${list.size}）", items, font) { i ->
+                            if (i < list.size) onPicked(list[i])
+                            else InstallGuidePanel(this, font, installUrl(),
+                                check = { auth.repositories(token).takeIf { it.size > list.size }.orEmpty() },
+                                onRepos = ::show, onDismiss = {}, adding = list.isNotEmpty()).show()
+                        }
                     }
+                    show(repos)
                 }.onFailure { toast("读取仓库列表失败：${it.message}") }
             }
         }, "list-repos").apply { isDaemon = true }.start()
