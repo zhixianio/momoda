@@ -12,6 +12,7 @@ import java.text.SimpleDateFormat
 import java.util.Base64
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** GitHub 同步的配置。token 用 Android Keystore 加密保存。 */
 class SyncSettings(context: Context) {
@@ -105,15 +106,32 @@ class GitHubSync(
 
     private class NotFastForward : Exception()
 
+    /** 另一次同步还没结束。 */
+    class Busy : Exception("上一次同步还没结束")
+
+    /**
+     * 同步一次。同一进程里同时只能有一次同步：状态文件和本地文件只有一份，
+     * Activity 重建后新实例不知道旧实例的同步还在跑，所以不能靠 Activity 里的标志。
+     * 已经有同步在跑时抛 [Busy]。
+     */
     fun run(): Result {
-        repeat(3) { attempt ->
-            try {
-                return once()
-            } catch (e: NotFastForward) {
-                if (attempt == 2) throw IllegalStateException("远端一直在变化，稍后再试")
+        if (!running.compareAndSet(false, true)) throw Busy()
+        try {
+            repeat(3) { attempt ->
+                try {
+                    return once()
+                } catch (e: NotFastForward) {
+                    if (attempt == 2) throw IllegalStateException("远端一直在变化，稍后再试")
+                }
             }
+            error("unreachable")
+        } finally {
+            running.set(false)
         }
-        error("unreachable")
+    }
+
+    companion object {
+        private val running = AtomicBoolean(false)
     }
 
     private fun once(): Result {

@@ -894,6 +894,11 @@ class MainActivity : Activity() {
                     if (force || res.conflicts.isNotEmpty() || res.trashed > 0) toast("同步：${res.summary()}")
                     if (res.changedLocal) afterExternalChange()
                 }.onFailure {
+                    if (it is GitHubSync.Busy) {
+                        // Activity 重建前开始的同步还在跑：它结束后会照常记录，这里什么都不改
+                        if (force) toast(it.message!!)
+                        return@onFailure
+                    }
                     Log.w("momoda", "同步失败", it)
                     syncStatus = "同步失败"
                     if (force) toast("同步失败：${it.message ?: it.javaClass.simpleName}")

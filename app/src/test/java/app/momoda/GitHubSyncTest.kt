@@ -161,5 +161,19 @@ class GitHubSyncTest {
         assertEquals("b", read("b.md"))
     }
 
+    @Test fun onlyOneSyncAtATimeInProcess() {
+        write("a.md", "v1")
+        sync()
+        gh.push(mapOf("a.md" to "v2"))
+        // 第一次同步下载到一半时（Activity 重建后）又开始了一次同步
+        var second: Result<GitHubSync.Result>? = null
+        gh.beforeBlobGet = { gh.beforeBlobGet = null; second = runCatching { sync() } }
+        sync()
+        assertTrue(second!!.exceptionOrNull() is GitHubSync.Busy)
+        assertEquals("v2", read("a.md"))
+        // 结束后可以再同步
+        assertEquals("已是最新", sync().summary())
+    }
+
     @Test fun targetToStringHidesToken() = assertFalse(target().toString().contains("secret-token"))
 }
