@@ -685,7 +685,7 @@ class MainActivity : Activity() {
             appendLine("文档目录：${store.dir.absolutePath.removePrefix("/storage/emulated/0/")}")
             appendLine("外部字体：把 .ttf / .otf 放进 ${fonts.folder().absolutePath.removePrefix("/storage/emulated/0/")}")
             appendLine()
-            appendLine("墨墨打 $version")
+            appendLine("墨墨打 $version · GPL-3.0 开源 · momoda.zhixian.io")
             appendLine("字体：霞鹜文楷屏幕阅读版（SIL Open Font License 1.1）")
             append("拼音数据：Unicode Unihan")
         }

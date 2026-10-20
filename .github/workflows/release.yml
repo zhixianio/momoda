@@ -1,0 +1,122 @@
+# 打 tag v* 时构建签名的 release 包并发布到 GitHub Releases（见 docs/RELEASE.md）
+#
+# 需要在仓库 Settings → Secrets and variables → Actions 里配置：
+#   MOMODA_KEYSTORE_BASE64   base64 编码的 .jks
+#   MOMODA_KEYSTORE_PASSWORD
+#   MOMODA_KEY_ALIAS
+#   MOMODA_KEY_PASSWORD
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      # 版本号完全由 tag 决定：v主.次.修订[-预发布.序号]
+      # versionCode = (主*10000 + 次*100 + 修订)*100 + (正式版 99 / 预发布序号)，保证预发布版总比同版本的正式版小
+      - name: 从 tag 推出版本号
+        id: ver
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          if [[ ! "$ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[a-z]+\.([0-9]+))?$ ]]; then
+            echo "::error::tag 格式应为 v1.2.3 或 v1.2.3-beta.4，实际是 $GITHUB_REF_NAME"
+            exit 1
+          fi
+          base=$(( (BASH_REMATCH[1]*10000 + BASH_REMATCH[2]*100 + BASH_REMATCH[3]) * 100 ))
+          if [ -n "${BASH_REMATCH[5]}" ]; then
+            if [ "${BASH_REMATCH[5]}" -ge 99 ]; then echo "::error::预发布序号必须小于 99"; exit 1; fi
+            code=$(( base + BASH_REMATCH[5] ))
+          else
+            code=$(( base + 99 ))
+          fi
+          echo "name=$ver" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "versionName=$ver versionCode=$code"
+
+      # 发布包一律现下载字体，不用缓存
+      - run: scripts/fetch-fonts.sh
+
+      - name: 还原签名密钥
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MOMODA_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::没有配置 MOMODA_KEYSTORE_BASE64，拒绝用 debug 密钥发布"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: 构建
+        env:
+          MOMODA_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          MOMODA_KEYSTORE_PASSWORD: ${{ secrets.MOMODA_KEYSTORE_PASSWORD }}
+          MOMODA_KEY_ALIAS: ${{ secrets.MOMODA_KEY_ALIAS }}
+          MOMODA_KEY_PASSWORD: ${{ secrets.MOMODA_KEY_PASSWORD }}
+        run: ./gradlew testDebugUnitTest assembleRelease -PversionName=${{ steps.ver.outputs.name }} -PversionCode=${{ steps.ver.outputs.code }}
+
+      - name: 校验签名并改名
+        id: apk
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify --print-certs "$apk" | tee certs.txt
+          if grep -q "CN=Android Debug" certs.txt; then
+            echo "::error::release 包是 debug 密钥签名的"
+            exit 1
+          fi
+          out="momoda-$GITHUB_REF_NAME.apk"
+          cp "$apk" "$out"
+          sha256sum "$out" > "$out.sha256"
+          # R8 混淆映射：用户发来的崩溃堆栈要靠它还原（retrace）
+          cp app/build/outputs/mapping/release/mapping.txt "momoda-$GITHUB_REF_NAME-mapping.txt"
+          echo "file=$out" >> "$GITHUB_OUTPUT"
+          echo "cert=$(sed -n 's/.*certificate SHA-256 digest: //p' certs.txt | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: 删除密钥
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+      # 发布说明取 CHANGELOG.md 里对应版本的一节；名字带 - 的版本（如 0.9.0-beta.1）标为预发布
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v v="$ver" '
+            /^## / { on = index($0, "[" v "]") > 0; next }
+            on' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md 里没有 [$ver] 这一节"
+            exit 1
+          fi
+          {
+            echo
+            echo "---"
+            echo "签名证书 SHA-256：\`${{ steps.apk.outputs.cert }}\`"
+            echo
+            echo "APK SHA-256：\`$(cut -d' ' -f1 "${{ steps.apk.outputs.file }}.sha256")\`"
+          } >> notes.md
+          flags=()
+          case "$ver" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" \
+            "${{ steps.apk.outputs.file }}" "${{ steps.apk.outputs.file }}.sha256" \
+            "momoda-$GITHUB_REF_NAME-mapping.txt" \
+            --title "墨墨打 $ver" --notes-file notes.md "${flags[@]}"

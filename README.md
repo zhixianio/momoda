@@ -2,7 +2,7 @@
 
 为 Android 墨水屏设计、为中文优化的沉浸式写作应用。即开即打，全键盘操作。
 
-> 当前阶段：**M0 验证原型**。设计见 [DESIGN.md](DESIGN.md)，验证进度见 [docs/M0.md](docs/M0.md)。
+> 官网：[momoda.zhixian.io](https://momoda.zhixian.io)。设计见 [DESIGN.md](DESIGN.md)，开发记录见 docs/。
 
 ## 推荐输入法
 
@@ -23,4 +23,6 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## 授权
 
-字体：霞鹜文楷屏幕阅读版（LXGW WenKai Screen），SIL Open Font License 1.1，见 `app/src/main/assets/fonts/OFL.txt`。
+墨墨打以 [GNU GPL v3.0](LICENSE) 发布。贡献代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+字体：霞鹜文楷屏幕阅读版（LXGW WenKai Screen），SIL Open Font License 1.1，见 `app/src/main/assets/fonts/OFL.txt`。完整的第三方授权清单见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。发布流程见 [docs/RELEASE.md](docs/RELEASE.md)。

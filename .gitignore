@@ -6,3 +6,8 @@ local.properties
 .DS_Store
 captures/
 app/src/main/assets/fonts/*.ttf
+
+# 发布签名：密钥和密码绝不进 git
+keystore.properties
+*.jks
+*.keystore
