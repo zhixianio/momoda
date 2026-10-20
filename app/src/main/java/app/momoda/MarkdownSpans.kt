@@ -12,7 +12,6 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.LineBackgroundSpan
 import android.text.style.MetricAffectingSpan
-import android.text.style.ParagraphStyle
 
 /** 墨墨打自己加的 Markdown 样式。实现了这个接口的 Span 不会被“去掉外来样式”清理掉。 */
 interface MdSpan
@@ -127,12 +126,13 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
     fun restyle(text: Editable, from: Int, to: Int) {
         var lineStart = lineStartOf(text, from.coerceIn(0, text.length))
         var stop = to.coerceIn(0, text.length)
-        // 编辑时 SpannableStringBuilder 会把段落样式的端点挪到下一个换行之后，样式被拉长到相邻几行
-        // （在引用行末回车、再在空的“> ”上回车）。styleLine 只清理落在本行内的样式，拉长的会留下来：
-        // 引用竖线叠成好几条，还延伸到下面的段落。所以把与范围相交的段落样式覆盖的行全部清掉重排。
+        // 编辑会把样式拉长到相邻几行：SpannableStringBuilder 把段落样式的端点挪到下一个换行之后
+        // （在引用行末回车、再在空的“> ”上回车），在标题、粗体中间回车时字符样式也跟着跨到下一行。
+        // styleLine 只清理落在本行内的样式，拉长的会留下来：引用竖线叠成好几条、延伸到下面的段落，
+        // 回车后的下一行仍显示成标题。所以把与范围相交的样式覆盖的行全部清掉重排。
         while (true) {
-            val stretched = text.getSpans(lineStart, stop, ParagraphStyle::class.java).filter { span ->
-                span is MdSpan && text.getSpanEnd(span) > lineStart && text.getSpanStart(span) < stop &&
+            val stretched = text.getSpans(lineStart, stop, MdSpan::class.java).filter { span ->
+                text.getSpanEnd(span) > lineStart && text.getSpanStart(span) < stop &&
                     (text.getSpanStart(span) < lineStart || text.getSpanEnd(span) > stop)
             }
             if (stretched.isEmpty()) break
@@ -141,8 +141,8 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
                 stop = maxOf(stop, text.getSpanEnd(span))
             }
         }
-        for (span in text.getSpans(lineStart, stop, ParagraphStyle::class.java)) {
-            if (span is MdSpan && text.getSpanEnd(span) > lineStart && text.getSpanStart(span) < stop) text.removeSpan(span)
+        for (span in text.getSpans(lineStart, stop, MdSpan::class.java)) {
+            if (text.getSpanEnd(span) > lineStart && text.getSpanStart(span) < stop) text.removeSpan(span)
         }
         while (true) {
             val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }

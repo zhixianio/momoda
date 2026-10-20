@@ -30,6 +30,16 @@ class MarkdownStylerTest {
     }
 
     @Test
+    fun headingStretchedOverNextLineIsRemoved() {
+        // 在“## hello world”的 wo 和 rld 之间回车：标题样式跟着跨到了下一行，下一行仍显示成标题
+        val t = SpanText("## hello wo\n\nrld again")
+        t.setSpan(HeadingSpan(1.2f), 3, t.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        styler.restyle(t, 13, t.length)
+        val headings = t.spans.filter { it.what is HeadingSpan }.map { t.toString().substring(it.start, it.end) }
+        assertEquals(listOf("hello wo"), headings)
+    }
+
+    @Test
     fun neighbouringParagraphStylesAreKept() {
         val t = SpanText("> 一\n> 二\n正文")
         styler.restyleAll(t)
