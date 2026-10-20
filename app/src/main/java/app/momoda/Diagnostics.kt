@@ -69,6 +69,12 @@ object Diagnostics {
         }.onFailure { Log.w("momoda", "读取退出原因失败", it) }
     }
 
+    /** 记一条不含文档内容的事件（例如保存太慢），导出诊断时一并带上。在后台线程写。 */
+    fun note(context: Context, kind: String, body: String) {
+        val app = context.applicationContext
+        Thread({ runCatching { write(app, kind, "时间：$stamp\n$body") } }, "diagnostics").apply { isDaemon = true }.start()
+    }
+
     private fun write(context: Context, kind: String, body: String) {
         val d = dir(context)
         File(d, "$kind-${System.currentTimeMillis()}.txt").writeText(body)

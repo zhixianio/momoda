@@ -27,10 +27,18 @@ object Titles {
 
     /** 摘要：标题之后的前几行正文，去掉 Markdown 标记，压成一行。 */
     fun excerptOf(text: String, maxChars: Int = 60): String {
-        val lines = text.lineSequence().filter { it.isNotBlank() }.toList()
-        val body = if (lines.isNotEmpty() && titleOf(lines.first()) != null) lines.drop(1) else lines
-        val joined = body.joinToString(" ") { stripMarkers(it).trim() }
-        return if (joined.length > maxChars) joined.take(maxChars) + "…" else joined
+        // 够长就停，不必解析整篇长文
+        val joined = StringBuilder()
+        var firstLine = true
+        var count = 0
+        for (line in text.lineSequence()) {
+            if (line.isBlank()) continue
+            if (firstLine) { firstLine = false; if (titleOf(line) != null) continue }
+            if (count++ > 0) joined.append(' ')
+            joined.append(stripMarkers(line).trim())
+            if (joined.length > maxChars) return joined.take(maxChars).toString() + "…"
+        }
+        return joined.toString()
     }
 
     /** 去掉 Markdown 解析器认出的标记（`#`、`**`、`- ` 等），其他字符原样保留，例如 `3 * 4`。 */

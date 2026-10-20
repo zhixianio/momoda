@@ -176,14 +176,14 @@ class DocManagerPanel(
     private fun reload() {
         val files = if (inTrash) store.trashList() else store.list()
         val loaded = files.map { f ->
-            val text = store.read(f)
-            val title = Titles.titleOf(text) ?: f.nameWithoutExtension
+            val s = store.summaries.of(f)
+            val title = s.title ?: f.nameWithoutExtension
             val detail = buildString {
                 append(dateFmt.format(Date(f.lastModified())))
-                append(" · ").append(TextStats.format(TextStats.wordCount(text))).append(" 字")
+                append(" · ").append(TextStats.format(s.words)).append(" 字")
                 if (!inTrash && f == current()) append(" · 当前")
             }
-            Entry(f, title, detail, Titles.excerptOf(text))
+            Entry(f, title, detail, s.excerpt)
         }
         entries = when (sort) {
             Sort.MODIFIED -> loaded

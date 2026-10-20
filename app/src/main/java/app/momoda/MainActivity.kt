@@ -154,6 +154,11 @@ class MainActivity : Activity() {
                 Log.i("momoda", "coldStart=${coldStartMs}ms font=${fontLoadMs}ms dir=${store.dir}")
                 // 拼音表只给搜索用，等第一帧画完再在后台读，不和冷启动抢 CPU
                 handler.postDelayed({ Pinyin.warmUp(assets) }, 300)
+                // 文档列表的标题和字数也在后台先读好，打开 Ctrl+O 和文档管理页时不用在主线程读每篇全文
+                handler.postDelayed({
+                    val files = store.list()
+                    Thread({ store.summaries.warmUp(files) }, "doc-summaries").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+                }, 1000)
                 // 检查更新同样推迟，而且每天最多联网一次
                 handler.postDelayed({ checkForUpdates(force = false) }, 3000)
                 Thread { Diagnostics.recordExitReasons(this@MainActivity) }.start()
@@ -312,6 +317,9 @@ class MainActivity : Activity() {
         if (!::doc.isInitialized) return
         if (dirty) {
             val text = editor.text.toString()
+            // 保存有意留在主线程、写完并 fsync 才算存好：顺序简单，崩溃或断电都不丢字。
+            // 存储很慢时会卡住界面，记下来，看实际设备上是否需要改成后台写
+            val t0 = SystemClock.uptimeMillis()
             try {
                 // 后台同步写本地文件时也拿这把锁：检查和写入之间不会被同步插进来
                 val copy = synchronized(store) {
@@ -330,6 +338,11 @@ class MainActivity : Activity() {
                 }
                 dirty = false
                 if (saveError != null) { saveError = null; refreshChrome() }
+                val ms = SystemClock.uptimeMillis() - t0
+                if (ms > 1000) {
+                    Log.w("momoda", "保存用了 ${ms}ms")
+                    Diagnostics.note(this, "slow-save", "保存用了 ${ms}ms（${text.length} 字符）")
+                }
             } catch (e: Exception) {
                 Log.e("momoda", "保存失败 ${doc.absolutePath}", e)
                 val first = saveError == null
@@ -358,11 +371,11 @@ class MainActivity : Activity() {
         save()
         val files = store.list()
         val items = files.map { f ->
-            val text = if (f == doc) editor.text.toString() else store.read(f)
-            val title = Titles.titleOf(text) ?: f.nameWithoutExtension
+            val s = if (f == doc) DocSummaries.summarize(editor.text.toString()) else store.summaries.of(f)
+            val title = s.title ?: f.nameWithoutExtension
             val detail = buildString {
                 append(dateFmt.format(Date(f.lastModified())))
-                append(" · ").append(TextStats.format(TextStats.wordCount(text))).append(" 字")
+                append(" · ").append(TextStats.format(s.words)).append(" 字")
                 if (f == doc) append(" · 当前")
             }
             InkItem(title, detail)

@@ -39,6 +39,9 @@ class DocStore(private val context: Context) {
         return File(dir, name).apply { writeText("# ") }
     }
 
+    /** 列表里显示的标题、字数、摘要（有缓存，不改变“上次读写”的记录）。 */
+    val summaries = DocSummaries()
+
     fun read(file: File): String {
         if (!file.exists()) return ""
         val text = file.readText()
