@@ -14,9 +14,9 @@
 <meta property="og:type" content="website">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="preload" href="fonts/wenkai-screen-subset.woff2?v=65a8af86" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=3843c378">
-<script src="site.js?v=0a90413e" defer></script>
+<link rel="preload" href="fonts/wenkai-screen-subset.woff2?v=ebb2afac" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css?v=1221ac2f">
+<script src="site.js?v=6e914d26" defer></script>
 </head>
 <body>
 
@@ -37,7 +37,7 @@
   <p class="tagline">专为 Android 墨水屏设计的中文写作应用<span class="cursor" aria-hidden="true"></span></p>
   <p class="lede meta">全键盘操作<span class="sep">·</span>开源<span class="sep">·</span>不收集数据</p>
   <p class="actions">
-    <a class="button" href="#download">下载预览版</a>
+    <a class="button" href="#download">下载</a>
     <a class="quiet" href="https://github.com/zhixianio/momoda">源代码</a>
   </p>
 </section>
@@ -45,7 +45,7 @@
 <figure class="device" aria-label="打字演示：在墨墨打里写一篇短文">
   <div class="bezel">
     <div class="screen" id="demo">
-      <div class="app-head"><span class="doc-title">第三章</span><span>22:41</span></div>
+      <div class="app-head"><span class="doc-title">大冒险家</span><span>22:41</span></div>
       <div class="page"><div class="text"></div></div>
       <div class="app-foot"><span class="count">0 字 · 已保存</span><span class="more">⋯</span></div>
     </div>
@@ -55,7 +55,7 @@
 <section class="core">
   <div>
     <h2><span class="mk">## </span>为中文优化</h2>
-    <p>标点避头尾，中文引号使用全角字形，内置霞鹜文楷。字数按汉字和英文单词统计。命令和文档支持拼音首字母搜索。推荐搭配 fcitx5 与小鹤双拼。</p>
+    <p>标点避头尾，中文引号使用全角字形，内置霞鹜文楷。字数按汉字和英文单词统计。命令和文档支持拼音首字母搜索。</p>
   </div>
   <div>
     <h2><span class="mk">## </span>极简专注</h2>
@@ -84,10 +84,10 @@
   <h2><span class="mk">## </span>下载</h2>
   <div class="waiting">
     <svg class="mark blinker" viewBox="31 37 46 33" aria-hidden="true"><g class="eyes"><circle cx="39.78" cy="59.33" r="7.11"/><circle cx="57.56" cy="59.33" r="7.11"/></g><rect x="70.23" y="38.89" width="4.88" height="29.33" rx="2.44"/></svg>
-    <p>预览版 0.9.0-beta.1，仍在持续调整。</p>
+    <p id="release-note">第一个预览版即将发布。</p>
   </div>
   <p class="actions">
-    <a class="button" href="https://github.com/zhixianio/momoda/releases">下载 APK</a>
+    <a class="button" id="release-link" href="https://github.com/zhixianio/momoda/releases">发布页</a>
     <span class="note">Android 8.0 及以上</span>
   </p>
 </section>

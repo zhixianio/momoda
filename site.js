@@ -22,6 +22,23 @@
     setTimeout(loop, 1200 + Math.random() * 2000);
   }
 
+  // ---------- 下载：读最新的发布（包括预览版），没有就保持“即将发布” ----------
+  const note = document.getElementById("release-note");
+  const link = document.getElementById("release-link");
+  if (note && link) {
+    fetch("https://api.github.com/repos/zhixianio/momoda/releases?per_page=1")
+      .then((r) => (r.ok ? r.json() : []))
+      .then(([rel]) => {
+        if (!rel) return;
+        const ver = rel.tag_name.replace(/^v/, "");
+        const apk = (rel.assets || []).find((x) => /\.apk$/.test(x.name));
+        note.textContent = rel.prerelease ? `预览版 ${ver}，仍在持续调整。` : `当前版本 ${ver}。`;
+        link.textContent = "下载 APK";
+        link.href = apk ? apk.browser_download_url : rel.html_url;
+      })
+      .catch(() => {});
+  }
+
   // ---------- 打字演示 ----------
   const demo = document.getElementById("demo");
   if (!demo) return;
@@ -31,14 +48,15 @@
   const countEl = demo.querySelector(".count");
 
   // “/” 是输入法一次上屏的分界，“|” 是回车分段
-  // 佛尔思（魔术师小姐）的口吻：塔罗会上被“世界”先生催稿
+  // 佛尔思（“魔术师”小姐）的口吻：“世界”先生委托她把格尔曼·斯帕罗的冒险写成小说《大冒险家》，每次聚会都问进度
   const SCRIPT = [
-    "# /第三章",
-    "周一/下午/三点/，/灰雾/之上/。",
-    "“/世界/”/先生/又/问起/了/稿子/。",
-    "我/说/还在/构思/，/其实/一个字/都/没写/。",
-    "散会/后/，/休/把/咖啡/放在/我/面前/：/“/今晚/写完/。/”",
-    "**/赞美/愚者/。/**/保佑/我/今晚/能/写完/。",
+    "# /大冒险家",
+    "“/魔术师/”/小姐/，/那本/小说/进度/怎么样/了/？",
+    "“/世界/”/先生/只/问了/一句/，/我/就/坐直/了/。",
+    "我/说/前五章/已经/写完/了/。/其实/只/写了/开头/。",
+    "回到/现实/，/我/从/床上/爬起来/，/抓起/了/钢笔/。",
+    "**/赞美/愚者/。/**/今晚/一定/写完/第三章/。",
+    "我/可不想/以/非凡/特性/的/形态/出席/下周/的/塔罗会/。",
   ];
 
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
