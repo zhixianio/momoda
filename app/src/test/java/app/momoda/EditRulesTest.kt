@@ -68,4 +68,8 @@ class EditRulesTest {
     @Test fun forwardDeleteMergesParagraphs() = assertEquals("第一段|第二段", forwardDelete("第一段|\n\n第二段"))
 
     @Test fun noRuleAtDocumentStart() = assertNull(EditRules.afterNewlineDeleted("\n正文", 0))
+
+    /** 以前 `toInt()` 溢出抛异常：打字时整个 App 崩溃。 */
+    @Test fun hugeNumberedListDoesNotCrash() =
+        assertEquals("13800138000. 电话\n13800138001. |", enter("13800138000. 电话|"))
 }

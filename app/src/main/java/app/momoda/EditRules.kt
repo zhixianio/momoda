@@ -27,8 +27,8 @@ object EditRules {
             }
             val next = when {
                 marker.first().isDigit() -> {
-                    val n = marker.dropLast(1).toInt()
-                    "${n + 1}${marker.last()}"
+                    val n = marker.dropLast(1).toBigInteger()
+                    "${n + java.math.BigInteger.ONE}${marker.last()}"
                 }
                 else -> marker
             }
