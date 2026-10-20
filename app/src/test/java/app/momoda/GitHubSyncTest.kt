@@ -110,5 +110,56 @@ class GitHubSyncTest {
         assertEquals("v3", gh.files()["a.md"])
     }
 
+    @Test fun failedRefUpdateIsSafeToRetry() {
+        write("a.md", "v1")
+        write("b.md", "b")
+        sync()
+        write("a.md", "本地 v2")
+        gh.push(mapOf("a.md" to "远端 v2", "b.md" to null, "c.md" to "c"))
+        gh.failNextPatch = java.io.IOException("网络断了")
+        assertTrue(runCatching { sync() }.isFailure)
+        // 下载、移进回收站、冲突副本已经落地，推送没成功；再同步一次
+        sync()
+        assertEquals("本地 v2", gh.files()["a.md"])
+        assertEquals("本地 v2", read("a.md"))
+        assertEquals("c", read("c.md"))
+        assertFalse(gh.files().containsKey("b.md"))
+        // 远端版本另存了（同一分钟内重试沿用同一份副本；跨了分钟会多一份内容相同的副本）
+        val copies = docs.list()!!.filter { it.contains(".remote-") }
+        assertTrue(copies.isNotEmpty())
+        for (c in copies) {
+            assertEquals("远端 v2", read(c))
+            assertEquals("远端 v2", gh.files()[c])
+        }
+    }
+
+    @Test fun lostRefUpdateResponseIsSafeToRetry() {
+        write("a.md", "v1")
+        sync()
+        write("a.md", "v2")
+        gh.failAfterPatch = java.io.IOException("响应丢了")
+        assertTrue(runCatching { sync() }.isFailure)
+        val r = sync()
+        assertEquals("已是最新", r.summary())
+        assertEquals(mapOf("a.md" to "v2"), gh.files())
+    }
+
+    @Test fun notFastForwardRetriesWithoutLosingRemoteCommit() {
+        write("a.md", "v1")
+        sync()
+        write("a.md", "v2")
+        // 推送前一刻别的设备抢先推了 b.md
+        var pushed = false
+        val racing = object : GitHubSync.Api {
+            override fun call(method: String, path: String, body: org.json.JSONObject?): org.json.JSONObject {
+                if (method == "PATCH" && !pushed) { pushed = true; gh.push(mapOf("b.md" to "b")) }
+                return gh.call(method, path, body)
+            }
+        }
+        GitHubSync(target(), docs, File(root, "state.json"), { f -> f.renameTo(File(trash, f.name)) }, racing, { "test" }).run()
+        assertEquals(mapOf("a.md" to "v2", "b.md" to "b"), gh.files())
+        assertEquals("b", read("b.md"))
+    }
+
     @Test fun targetToStringHidesToken() = assertFalse(target().toString().contains("secret-token"))
 }
