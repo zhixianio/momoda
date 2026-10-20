@@ -104,6 +104,7 @@ class MainActivity : Activity() {
                 intent.getStringExtra("githubToken")?.let { t -> token = t }
                 intent.getStringExtra("githubWeb")?.let { w -> webBase = w }
                 intent.getStringExtra("githubClientId")?.let { id -> clientId = id }
+                intent.getStringExtra("githubSubdir")?.let { d -> subdir = d }
             }
         }
         if (BuildConfig.DEBUG) intent.getStringExtra("updateApi")?.let {
@@ -804,7 +805,28 @@ class MainActivity : Activity() {
 
     private fun showSyncConfig() {
         save()
-        SyncConfigPanel(this, font, sync, ::makeSync, onLogin = ::loginGitHub, onDismiss = ::returnToEditor).show()
+        SyncConfigPanel(this, font, sync, ::makeSync, onLogin = ::loginGitHub, pickRepo = ::pickRepo,
+            manageUrl = installUrl(), onDismiss = ::returnToEditor).show()
+    }
+
+    private fun installUrl() = "${sync.webBase.trimEnd('/')}/apps/${BuildConfig.GITHUB_APP_SLUG}/installations/new"
+
+    /** 列出当前 token 能访问的仓库（GitHub App 安装到的仓库）供选择。 */
+    private fun pickRepo(onPicked: (String) -> Unit) {
+        val token = sync.token
+        if (token.isBlank()) { toast("先用 GitHub 登录"); return }
+        val auth = GitHubAuth(sync.clientId, sync.webBase, sync.apiBase)
+        Thread({
+            val r = runCatching { auth.repositories(token) }
+            handler.post {
+                r.onSuccess { repos ->
+                    if (repos.isEmpty()) toast("还没有可访问的仓库：在 GitHub 上把墨墨打装到你的仓库（${installUrl().removePrefix("https://")}）")
+                    else InkList.show(this, "选择仓库（${repos.size}）", repos.map { InkItem(it, if (it == sync.repo) "当前" else "") }, font) { i ->
+                        onPicked(repos[i])
+                    }
+                }.onFailure { toast("读取仓库列表失败：${it.message}") }
+            }
+        }, "list-repos").apply { isDaemon = true }.start()
     }
 
     /** 设备授权登录：验证码在手机或电脑上输入；成功后自动选仓库并开始第一次同步。 */
@@ -820,7 +842,7 @@ class MainActivity : Activity() {
             sync.token = token
             fun finish(repo: String) {
                 sync.repo = repo
-                toast("已登录，同步到 $repo")
+                toast("已登录，同步到 $repo（可在“GitHub 同步设置”里换仓库或指定仓库内目录）")
                 syncNow(force = true)
             }
             fun choose(list: List<String>) {
@@ -832,8 +854,7 @@ class MainActivity : Activity() {
             if (repos.isNotEmpty()) choose(repos)
             else {
                 // 还没把 App 装到任何仓库：显示安装地址，装好后自动继续
-                val installUrl = "${sync.webBase.trimEnd('/')}/apps/${BuildConfig.GITHUB_APP_SLUG}/installations/new"
-                InstallGuidePanel(this, font, installUrl, check = { auth.repositories(token) }, onRepos = ::choose, onDismiss = ::returnToEditor).show()
+                InstallGuidePanel(this, font, installUrl(), check = { auth.repositories(token) }, onRepos = ::choose, onDismiss = ::returnToEditor).show()
             }
         }, onDismiss = ::returnToEditor).show()
     }

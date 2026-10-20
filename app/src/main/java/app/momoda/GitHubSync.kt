@@ -30,6 +30,11 @@ class SyncSettings(context: Context) {
         get() = prefs.getString("token", null)?.let { runCatching { SecretBox.open(it) }.getOrNull() } ?: ""
         set(v) = prefs.edit().putString("token", if (v.isBlank()) null else SecretBox.seal(v.trim())).apply()
 
+    /** 仓库里的子目录，例如 `notes/momoda`；空表示仓库根目录。 */
+    var subdir: String
+        get() = prefs.getString("subdir", "")!!
+        set(v) = prefs.edit().putString("subdir", v.trim().trim('/').replace(Regex("/+"), "/")).apply()
+
     var auto: Boolean
         get() = prefs.getBoolean("auto", true)
         set(v) = prefs.edit().putBoolean("auto", v).apply()
@@ -60,6 +65,7 @@ class SyncSettings(context: Context) {
  * 推送时如果远端又有了新提交（非快进），整个流程重来，最多 3 次。
  *
  * 同步范围：文档目录里所有 .md（含子目录，例如 agent 写的 `_agent/`），不含隐藏目录（回收站）和 fonts/。
+ * 可以只同步到仓库里的某个子目录（[SyncSettings.subdir]），子目录以外的文件不会被读取或改动。
  */
 class GitHubSync(
     private val settings: SyncSettings,
@@ -113,8 +119,11 @@ class GitHubSync(
         val entries = tree.getJSONArray("tree")
         for (i in 0 until entries.length()) {
             val e = entries.getJSONObject(i)
-            val path = e.getString("path")
-            if (e.getString("type") == "blob" && inScope(path)) remote[path] = e.getString("sha")
+            // 只看子目录里的文件，并换算成相对子目录的路径；子目录外的文件原样保留在远端
+            val full = e.getString("path")
+            if (e.getString("type") != "blob" || !full.startsWith(prefix)) continue
+            val path = full.removePrefix(prefix)
+            if (inScope(path)) remote[path] = e.getString("sha")
         }
 
         // 2. 本地和上次同步的状态
@@ -139,7 +148,7 @@ class GitHubSync(
                 }
                 is SyncPlan.Action.Upload -> { treeEntries.put(uploadEntry(repoPath, a.path)); uploaded++ }
                 is SyncPlan.Action.DeleteRemote -> {
-                    treeEntries.put(JSONObject().put("path", a.path).put("mode", "100644").put("type", "blob").put("sha", JSONObject.NULL))
+                    treeEntries.put(JSONObject().put("path", prefix + a.path).put("mode", "100644").put("type", "blob").put("sha", JSONObject.NULL))
                     deleted++
                 }
             }
@@ -160,7 +169,8 @@ class GitHubSync(
             }
             for (i in 0 until treeEntries.length()) {
                 val e = treeEntries.getJSONObject(i)
-                if (e.isNull("sha")) remoteAfter.remove(e.getString("path")) else remoteAfter[e.getString("path")] = e.getString("sha")
+                val rel = e.getString("path").removePrefix(prefix)
+                if (e.isNull("sha")) remoteAfter.remove(rel) else remoteAfter[rel] = e.getString("sha")
             }
         }
 
@@ -181,7 +191,10 @@ class GitHubSync(
         return if (push) "连接成功：${r.optString("full_name")}（可以写入）" else "能读取 ${r.optString("full_name")}，但没有写入权限：请给 token 加上 Contents 的 Read and write"
     }
 
-    private fun stateKey() = "${settings.apiBase}|${settings.repo}|${settings.branch}"
+    private fun stateKey() = "${settings.apiBase}|${settings.repo}|${settings.branch}|${settings.subdir}"
+
+    /** 子目录前缀，例如 `notes/momoda/`；根目录时为空。 */
+    private val prefix get() = settings.subdir.let { if (it.isEmpty()) "" else "$it/" }
 
     private fun inScope(path: String): Boolean =
         path.endsWith(".md") && path.split('/').none { it.startsWith(".") } && !path.startsWith("fonts/")
@@ -210,7 +223,7 @@ class GitHubSync(
         val bytes = File(dir, path).readBytes()
         val sha = api("POST", "$repoPath/git/blobs", JSONObject()
             .put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64")).getString("sha")
-        return JSONObject().put("path", path).put("mode", "100644").put("type", "blob").put("sha", sha)
+        return JSONObject().put("path", prefix + path).put("mode", "100644").put("type", "blob").put("sha", sha)
     }
 
     private fun blob(repoPath: String, sha: String): ByteArray {

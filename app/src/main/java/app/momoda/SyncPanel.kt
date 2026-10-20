@@ -23,6 +23,10 @@ class SyncConfigPanel(
     private val settings: SyncSettings,
     private val makeSync: () -> GitHubSync,
     private val onLogin: () -> Unit,
+    /** 列出 GitHub App 能访问的仓库让用户选，选中后回调仓库名。 */
+    private val pickRepo: ((String) -> Unit) -> Unit,
+    /** 在 GitHub 上增减可访问仓库的地址。 */
+    private val manageUrl: String,
     private val onDismiss: () -> Unit,
 ) {
     fun show() {
@@ -50,6 +54,7 @@ class SyncConfigPanel(
         }
         val repo = field(settings.repo, "你的用户名/仓库名，例如 frank/notes")
         val branch = field(settings.branch, "main")
+        val subdir = field(settings.subdir, "留空表示仓库根目录，例如 notes/momoda")
         val token = field(settings.token, "github_pat_…", password = true)
         var auto = settings.auto
         val autoView = TextView(c).apply {
@@ -82,6 +87,7 @@ class SyncConfigPanel(
         fun save() {
             settings.repo = repo.text.toString()
             settings.branch = branch.text.toString()
+            settings.subdir = subdir.text.toString()
             settings.token = token.text.toString()
             settings.auto = auto
         }
@@ -107,8 +113,28 @@ class SyncConfigPanel(
                     dialog.dismiss(); onLogin()
                 })
             })
-            addView(label("或者手动填写：仓库")); addView(repo)
+            addView(label("仓库")); addView(repo)
+            addView(LinearLayout(c).apply {
+                setPadding(0, c.px(8), 0, 0)
+                addView(c.inkButton("从可访问的仓库里选", typeface) { pickRepo { chosen -> repo.setText(chosen) } })
+            })
+            addView(TextView(c).apply {
+                text = "想同步到别的仓库？先在 GitHub 上把它加进可访问列表：${manageUrl.removePrefix("https://")}"
+                setTextColor(Color.rgb(0x77, 0x77, 0x77))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                this.typeface = typeface
+                setPadding(0, c.px(6), 0, 0)
+            })
             addView(label("分支")); addView(branch)
+            addView(label("仓库内目录（可选）")); addView(subdir)
+            addView(TextView(c).apply {
+                text = "只同步这个目录，目录外的文件不会被读取或改动。切换仓库或目录后，第一次同步会合并两边的文件，同名但内容不同的会另存一份，不会丢。"
+                setTextColor(Color.rgb(0x77, 0x77, 0x77))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                this.typeface = typeface
+                setLineSpacing(0f, 1.3f)
+                setPadding(0, c.px(6), 0, 0)
+            })
             addView(label("Fine-grained token")); addView(token)
             addView(autoView)
             addView(help)
