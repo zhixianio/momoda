@@ -8,7 +8,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.net.URLDecoder
-import kotlin.random.Random
+import java.security.SecureRandom
 
 /**
  * “从手机粘贴”：在局域网里临时开一个小网页，让用户在手机或电脑上把长文本（token、接口地址、正文片段）
@@ -17,9 +17,14 @@ import kotlin.random.Random
  * 安全措施：只在弹窗打开期间运行；提交必须带屏幕上的 4 位配对码；输错 5 次、提交成功一次或 10 分钟无人使用后自动关闭。
  * 注意：这是局域网内的明文 HTTP，只适合在自己信任的 Wi-Fi 下使用。
  */
-class PasteServer(private val onSubmit: (Map<String, String>) -> Unit, private val onClosed: (String) -> Unit) {
+class PasteServer(
+    private val onSubmit: (Map<String, String>) -> Unit,
+    private val onClosed: (String) -> Unit,
+    /** 一个请求从连上到读完的总时限。只有一个处理线程，慢吞吞的连接不能把它一直占着。 */
+    private val requestTimeoutMs: Long = 20_000,
+) {
 
-    val code = "%04d".format(Random.nextInt(10000))
+    val code = "%04d".format(SecureRandom().nextInt(10000))
     private var server: ServerSocket? = null
     @Volatile private var closed = false
     private var wrong = 0
@@ -30,11 +35,17 @@ class PasteServer(private val onSubmit: (Map<String, String>) -> Unit, private v
         // 优先用固定端口，地址好记；被占用时退回系统分配的端口
         val s = runCatching { ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(PORT)) } }
             .getOrElse { ServerSocket(0) }
+        listen(s)
+        return "http://$ip:${s.localPort}"
+    }
+
+    internal fun listen(s: ServerSocket) {
         s.soTimeout = 10 * 60_000
         server = s
         Thread({ loop(s) }, "paste-server").apply { isDaemon = true }.start()
-        return "http://$ip:${s.localPort}"
     }
+
+    private class TooSlow : java.io.IOException("请求太慢")
 
     fun close(reason: String = "") {
         if (closed) return
@@ -58,12 +69,13 @@ class PasteServer(private val onSubmit: (Map<String, String>) -> Unit, private v
     }
 
     private fun handle(socket: Socket) {
-        socket.soTimeout = 15_000
+        val deadline = System.currentTimeMillis() + requestTimeoutMs
+        socket.soTimeout = requestTimeoutMs.toInt()
         val input = socket.getInputStream().buffered()
-        val requestLine = readLine(input) ?: return
+        val requestLine = readLine(input, deadline) ?: return
         var length = 0
         while (true) {
-            val h = readLine(input) ?: break
+            val h = readLine(input, deadline) ?: break
             if (h.isEmpty()) break
             if (h.lowercase().startsWith("content-length:")) length = h.substringAfter(':').trim().toIntOrNull() ?: 0
         }
@@ -71,7 +83,10 @@ class PasteServer(private val onSubmit: (Map<String, String>) -> Unit, private v
         if (method == "POST" && path.startsWith("/submit")) {
             val body = ByteArray(length.coerceAtMost(1_000_000))
             var read = 0
-            while (read < body.size) { val n = input.read(body, read, body.size - read); if (n < 0) break; read += n }
+            while (read < body.size) {
+                if (System.currentTimeMillis() > deadline) throw TooSlow()
+                val n = input.read(body, read, body.size - read); if (n < 0) break; read += n
+            }
             val form = parseForm(String(body, 0, read))
             if (form["code"] != code) {
                 wrong++
@@ -90,9 +105,10 @@ class PasteServer(private val onSubmit: (Map<String, String>) -> Unit, private v
         }
     }
 
-    private fun readLine(input: java.io.InputStream): String? {
+    private fun readLine(input: java.io.InputStream, deadline: Long): String? {
         val sb = StringBuilder()
         while (true) {
+            if (System.currentTimeMillis() > deadline) throw TooSlow()
             val c = input.read()
             if (c < 0) return if (sb.isEmpty()) null else sb.toString()
             if (c == '\n'.code) return sb.toString().trimEnd('\r')

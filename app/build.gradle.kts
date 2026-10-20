@@ -71,6 +71,10 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    testOptions {
+        // 单测里 android.util.Log 等桩方法返回默认值，不抛 "Stub!"（PasteServer 出错时会写日志）
+        unitTests.isReturnDefaultValues = true
+    }
     androidResources {
         // 字体已经是压缩格式，不再压缩可以直接 mmap，加载更快
         noCompress += "ttf"
