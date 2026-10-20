@@ -27,6 +27,8 @@ class InstallGuidePanel(
     private val onDismiss: () -> Unit,
     /** true：已经装过，只是要再加几个仓库（说明文字不同）。 */
     private val adding: Boolean = false,
+    /** 叠在同步设置面板上时窄一些，见 [panelWidth]。 */
+    private val nested: Boolean = false,
 ) {
     fun show() {
         val c = context
@@ -69,7 +71,8 @@ class InstallGuidePanel(
                 addView(c.inkButton("关闭（Esc）", typeface) { dialog.dismiss() })
             })
         }
-        dialog = c.inkDialog(box, Gravity.TOP or Gravity.CENTER_HORIZONTAL, 0.84f, WindowManager.LayoutParams.WRAP_CONTENT)
+        dialog = c.inkDialog(box, Gravity.TOP or Gravity.CENTER_HORIZONTAL, 0.86f, WindowManager.LayoutParams.WRAP_CONTENT)
+        dialog.window?.setLayout(c.panelWidth(nested), WindowManager.LayoutParams.WRAP_CONTENT)
         dialog.window?.attributes = dialog.window?.attributes?.apply { y = (c.resources.displayMetrics.heightPixels * 0.12f).toInt() }
         dialog.setOnDismissListener { done = true; onDismiss() }
         dialog.show()

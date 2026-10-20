@@ -57,6 +57,8 @@ object InkList {
         typeface: Typeface?,
         searchHint: String? = "输入筛选，支持拼音首字母",
         onDismiss: () -> Unit = {},
+        /** 叠在另一个面板上：比面板窄一些，见 [panelWidth]。 */
+        nested: Boolean = false,
         onPick: (Int) -> Unit,
     ) {
         val dp = context.resources.displayMetrics.density
@@ -234,7 +236,8 @@ object InkList {
             clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             setWindowAnimations(0)
             val metrics = context.resources.displayMetrics
-            setLayout(min(px(600), (metrics.widthPixels * 0.86f).toInt()), WindowManager.LayoutParams.WRAP_CONTENT)
+            val width = if (nested) context.panelWidth(nested = true) else min(px(600), (metrics.widthPixels * 0.86f).toInt())
+            setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.TOP or Gravity.CENTER_HORIZONTAL)
             attributes = attributes.apply { y = (metrics.heightPixels * 0.12f).toInt() }
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED)

@@ -914,11 +914,11 @@ class MainActivity : Activity() {
                     fun show(list: List<String>) {
                         val items = list.map { InkItem(it, if (it == sync.repo) "当前" else "") } +
                             InkItem("让墨墨打访问其他仓库…", "在手机或电脑上添加")
-                        InkList.show(this, "选择仓库（${list.size}）", items, font) { i ->
+                        InkList.show(this, "选择仓库（${list.size}）", items, font, nested = true) { i ->
                             if (i < list.size) onPicked(list[i])
                             else InstallGuidePanel(this, font, installUrl(),
                                 check = { auth.repositories(token).takeIf { it.size > list.size }.orEmpty() },
-                                onRepos = ::show, onDismiss = {}, adding = list.isNotEmpty()).show()
+                                onRepos = ::show, onDismiss = {}, adding = list.isNotEmpty(), nested = true).show()
                         }
                     }
                     show(repos)

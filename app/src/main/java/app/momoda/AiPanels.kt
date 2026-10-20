@@ -52,6 +52,15 @@ internal fun Context.inkDialog(box: View, gravity: Int, widthFraction: Float, he
     return d
 }
 
+/**
+ * 面板的宽度（AI 设置、同步设置等）。[nested] 为 true 时是叠在面板上的弹窗（例如同步设置里选仓库）：
+ * 左右各窄 28dp，边框不和下面的面板重合，一眼看得出是两层。
+ */
+internal fun Context.panelWidth(nested: Boolean = false): Int {
+    val top = min(px(680), (resources.displayMetrics.widthPixels * 0.86f).toInt())
+    return if (nested) top - px(56) else top
+}
+
 internal fun Context.inkBox() = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
     background = GradientDrawable().apply { setColor(Color.WHITE); setStroke(px(2), Color.BLACK) }
