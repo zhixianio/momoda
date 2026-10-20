@@ -903,8 +903,11 @@ class MainActivity : Activity() {
 
     /** 同步改动了本地文件：当前文档被删就换一篇；没有未保存修改就载入新版本。 */
     private fun afterExternalChange() {
-        if (!doc.exists()) { dirty = false; loadDoc(store.openLastOrCreate()); return }
-        if (!dirty && store.changedOnDisk(doc)) loadDoc(doc)
+        // 还有没保存的字：先保存。文件被同步改过或移走时，save() 会把编辑器里的版本另存一份
+        if (dirty) save()
+        if (dirty) return // 保存失败：编辑器里的内容是唯一的一份，留着它，save() 会自动重试
+        if (!doc.exists()) { loadDoc(store.openLastOrCreate()); return }
+        if (store.changedOnDisk(doc)) loadDoc(doc)
     }
 
     // ---------- 更新 ----------
