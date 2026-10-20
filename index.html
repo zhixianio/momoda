@@ -14,9 +14,9 @@
 <meta property="og:type" content="website">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="preload" href="fonts/wenkai-screen-subset.woff2?v=ebb2afac" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=1221ac2f">
-<script src="site.js?v=6e914d26" defer></script>
+<link rel="preload" href="fonts/wenkai-screen-subset.woff2?v=9b313461" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css?v=fb5c0300">
+<script src="site.js?v=ef0b71b2" defer></script>
 </head>
 <body>
 
@@ -45,17 +45,19 @@
 <figure class="device" aria-label="打字演示：在墨墨打里写一篇短文">
   <div class="bezel">
     <div class="screen" id="demo">
-      <div class="app-head"><span class="doc-title">大冒险家</span><span>22:41</span></div>
+      <div class="app-head"><span class="doc-title">被催稿的一天</span><span>22:41</span></div>
       <div class="page"><div class="text"></div></div>
-      <div class="app-foot"><span class="count">0 字 · 已保存</span><span class="more">⋯</span></div>
+      <div class="app-foot"><span class="status"><span class="count">0 字 · 已保存</span><span class="sync"></span></span><span class="more">⋯</span></div>
     </div>
   </div>
+  <div class="keys" aria-hidden="true"></div>
+  <div class="acts"><button type="button">写作</button><button type="button">Vim</button><button type="button">命令面板</button><button type="button">Zen</button></div>
 </figure>
 
 <section class="core">
   <div>
     <h2><span class="mk">## </span>为中文优化</h2>
-    <p>标点避头尾，中文引号使用全角字形，内置霞鹜文楷。字数按汉字和英文单词统计。命令和文档支持拼音首字母搜索。</p>
+    <p>标点避头尾，中文引号使用全角字形。内置霞鹜文楷，也可以换成自己的字体：把 <code>.ttf</code> 或 <code>.otf</code> 放进 <code>Documents/momoda/fonts</code> 即可。字数按汉字和英文单词统计，命令和文档支持拼音首字母搜索。</p>
   </div>
   <div>
     <h2><span class="mk">## </span>极简专注</h2>
@@ -63,7 +65,7 @@
   </div>
   <div>
     <h2><span class="mk">## </span>全键盘操作</h2>
-    <p>所有功能都能用键盘完成：常用操作有快捷键，其余都在 <kbd>Ctrl</kbd> <kbd>K</kbd> 命令面板里。可选 Vim 模式，支持常用的移动、删除和撤销。</p>
+    <p>所有功能都能用键盘完成：常用操作有快捷键，其余都在 <kbd>Ctrl</kbd> <kbd>K</kbd> 命令面板里。CapsLock 可以改成 Ctrl，或与 Ctrl 互换（系统实体键盘布局，所有 App 里都生效）。可选 Vim 模式，支持常用的移动、删除和撤销。</p>
   </div>
   <div>
     <h2><span class="mk">## </span>存储与同步</h2>
@@ -88,7 +90,7 @@
   </div>
   <p class="actions">
     <a class="button" id="release-link" href="https://github.com/zhixianio/momoda/releases">发布页</a>
-    <span class="note">Android 8.0 及以上</span>
+    <span class="note">Android 8.0 及以上 · 目前只在汉王 N10 Pro 上实机测试</span>
   </p>
 </section>
 

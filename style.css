@@ -2,7 +2,7 @@
 
 @font-face {
   font-family: "WenKai Screen";
-  src: url("fonts/wenkai-screen-subset.woff2?v=ebb2afac") format("woff2");
+  src: url("fonts/wenkai-screen-subset.woff2?v=9b313461") format("woff2");
   font-display: swap;
 }
 
@@ -115,6 +115,31 @@ h1 { font-size: 46px; line-height: 1.25; margin: 0 0 .35em; font-weight: 700; le
 .caret { display: inline-block; width: 2px; height: 1.1em; background: var(--ink); vertical-align: -.2em; margin: 0 1px; }
 figcaption { font-size: 14px; color: #6f6f6f; margin-top: 16px; text-align: center; }
 
+/* normal 模式的方块光标、Zen 模式 */
+.text .block { background: var(--ink); color: #fff; }
+.screen.zen .app-head > *, .screen.zen .app-foot .status { visibility: hidden; }
+
+/* 命令面板：和 App 的 InkList 一样，白底黑框，当前项用黑框标出，没有阴影和动画 */
+.palette {
+  position: absolute; left: 22cqw; right: 22cqw; top: 6cqw;
+  background: #fff; border: 2px solid var(--ink);
+  padding: 1.6cqw 1.8cqw 1cqw; font-size: 1.55cqw; line-height: 1.4;
+}
+.palette .ttl { margin-bottom: 1cqw; }
+.palette .q { border: 1px solid #9a9a9a; padding: .7cqw 1cqw; margin-bottom: 1cqw; min-height: 1.4em; box-sizing: content-box; }
+.palette .ph { color: #aaa; }
+.palette .item { display: flex; gap: 1.4cqw; align-items: baseline; padding: .9cqw 1cqw; border-top: 1px solid #e4e4e4; }
+.palette .item.sel { outline: 2px solid var(--ink); outline-offset: -2px; border-top-color: transparent; }
+.palette .hint { color: #8a8a8a; font-size: .8em; }
+
+/* 演示下方：按下的键，以及四幕的标签（当前幕黑色，其余浅灰，同专注模式） */
+.keys { height: 30px; margin-top: 16px; display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 18px; }
+.keys kbd { font-size: 15px; }
+.acts { display: flex; justify-content: center; gap: 1.6em; margin-top: 10px; font-size: 14px; }
+.acts button { background: none; border: 0; padding: 4px 0; font: inherit; color: #b0b0b0; cursor: pointer; }
+.acts button.on { color: var(--ink); }
+.acts button:hover { color: var(--ink); }
+
 /* 小节：标题前面带淡显的 ## ，和 App 里的 Markdown 一样 */
 section { margin-bottom: 88px; }
 h2 { font-size: 24px; line-height: 1.4; margin: 0 0 .5em; font-weight: 700; }
@@ -164,6 +189,9 @@ kbd {
   /* 小屏上把版心放宽，字才看得清 */
   .text { width: 90cqw; font-size: 3cqw; }
   .app-head, .app-foot { font-size: 2.2cqw; padding: 2.4cqw 3cqw; }
+  .palette { left: 8cqw; right: 8cqw; font-size: 2.6cqw; }
+  .keys { height: 26px; margin-top: 12px; }
+  .acts { gap: 1.2em; font-size: 13px; }
   .core { gap: 32px; }
   figcaption { font-size: 13px; }
   footer.running { margin-top: 72px; }
