@@ -37,12 +37,17 @@ class UserSettings(context: Context) {
         set(v) = prefs.edit().putBoolean("chrome", v).apply()
 
     var focus: Boolean
-        get() = prefs.getBoolean("focus", true)
+        get() = prefs.getBoolean("focus", false)
         set(v) = prefs.edit().putBoolean("focus", v).apply()
 
     var vim: Boolean
         get() = prefs.getBoolean("vim", false)
         set(v) = prefs.edit().putBoolean("vim", v).apply()
+
+    /** 把实体键盘的 CapsLock 当作 Ctrl 用（按住期间）。 */
+    var capsAsCtrl: Boolean
+        get() = prefs.getBoolean("capsAsCtrl", false)
+        set(v) = prefs.edit().putBoolean("capsAsCtrl", v).apply()
 
     var autoUpdate: Boolean
         get() = prefs.getBoolean("autoUpdate", true)

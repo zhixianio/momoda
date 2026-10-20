@@ -88,6 +88,8 @@ class MainActivity : Activity() {
 
     /** Ctrl 组合键按下时被消费的键码，抬起时也要一并消费。 */
     private val consumedDowns = mutableSetOf<Int>()
+    /** “CapsLock 当 Ctrl”打开时，CapsLock 正被按住。 */
+    private var capsHeld = false
 
     private val gray = Color.rgb(0x77, 0x77, 0x77)
 
@@ -186,9 +188,12 @@ class MainActivity : Activity() {
             addView(headerTitle, LinearLayout.LayoutParams(0, -2, 1f))
             addView(headerClock, LinearLayout.LayoutParams(-2, -2))
         }
+        // 页脚靠左，和页眉的标题对齐；右侧留给“⋯”
         footer = chromeText().apply {
-            gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, dp(14))
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(28), dp(6), dp(64), dp(14))
             setOnClickListener { showPalette() }
         }
         // 笔/触控入口：右下角的“⋯”常驻（zen 模式下也在），点页脚也能打开命令面板。
@@ -252,6 +257,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        capsHeld = false
         handler.removeCallbacks(clockRunnable)
         save()
         // 离开 App 也算“离开文档”：文件名跟上标题
@@ -491,9 +497,25 @@ class MainActivity : Activity() {
     private fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_UP && consumedDowns.remove(keyCode)) return true
 
+        // CapsLock 当 Ctrl：按住期间记下来，自己的按下和抬起都不交给输入法
+        if (keyCode == KeyEvent.KEYCODE_CAPS_LOCK && settings.capsAsCtrl) {
+            capsHeld = event.action == KeyEvent.ACTION_DOWN
+            KeyLog.add(event, "CapsLock 当 Ctrl")
+            refreshDebug()
+            return true
+        }
+
         // Ctrl/Cmd + 字母数字符号：在输入法之前处理，避免被输入法吞掉。
         // Ctrl + 方向键、Home/End、退格等编辑键不拦截，走系统默认行为（按词跳转、跳到文首文末等）。
-        val ctrl = event.isCtrlPressed || event.isMetaPressed
+        val ctrl = event.isCtrlPressed || event.isMetaPressed || capsHeld
+        if (capsHeld && !isShortcutKey(keyCode)) {
+            // CapsLock + 方向键、退格等：系统不知道 CapsLock 按着，把它改成 Ctrl 再交给编辑器
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                editor.onKeyDown(keyCode, asCtrl(event))
+                consumedDowns += keyCode
+            }
+            return true
+        }
         if (ctrl && isShortcutKey(keyCode)) {
             if (event.action == KeyEvent.ACTION_DOWN) {
                 val name = runShortcut(keyCode, event)
@@ -567,35 +589,45 @@ class MainActivity : Activity() {
             keyCode == KeyEvent.KEYCODE_PLUS || keyCode == KeyEvent.KEYCODE_SLASH
 
     private fun asCtrl(e: KeyEvent): KeyEvent {
-        if (!e.isMetaPressed) return e
-        val meta = (e.metaState and KeyEvent.META_META_MASK.inv()) or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
+        if (!e.isMetaPressed && !capsHeld) return e
+        val meta = (e.metaState and (KeyEvent.META_META_MASK or KeyEvent.META_CAPS_LOCK_ON).inv()) or
+            KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
         return KeyEvent(e.downTime, e.eventTime, e.action, e.keyCode, e.repeatCount, meta)
     }
 
     // ---------- 命令面板 ----------
 
-    private class Command(val id: String, val label: String, val shortcut: String = "", val run: () -> Unit)
+    private class Command(val id: String, val label: String, val shortcut: String = "", val run: () -> Unit) {
+        var group = ""
+    }
 
+    /** 命令面板里的命令，按分组固定排列（见 [PaletteLayout]）。 */
     private fun commands(): List<Command> = buildList {
+        var group = ""
+        fun add(c: Command) { c.group = group; this.add(c) }
+        group = "文档"
         add(Command("new", "新建文档", "Ctrl+N", ::newDoc))
         add(Command("switch", "打开文档", "Ctrl+O", ::showSwitcher))
         add(Command("previous", "切回上一篇", "Ctrl+Tab", ::switchToPrevious))
         add(Command("rename", "修改标题", "", ::renameTitle))
         add(Command("manage", "管理文档", "回收站、排序、批量查看", ::showManager))
-        add(Command("settings", "设置", "Ctrl+,", ::showSettings))
-        add(Command("sync", "立即同步", if (sync.configured) "${sync.repo} · Ctrl+Shift+S" else "未配置", { syncNow(force = true) }))
-        add(Command("github-login", "用 GitHub 登录（同步）", "手机或电脑上输入验证码，不用打 token", ::loginGitHub))
-        add(Command("sync-settings", "GitHub 同步设置", if (sync.configured) sync.repo else "未配置", ::showSyncConfig))
-        add(Command("ai", "AI 助手", "Ctrl+J", ::showAi))
-        add(Command("paste", "从手机或电脑粘贴", "AI 设置、GitHub token、正文片段", ::showPaste))
-        add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "未配置", ::showAiConfig))
-        add(Command("ai-prompts", "编辑 AI 指令", Prompts.FILE_NAME, ::editPrompts))
+        add(Command("trash", "删除当前文档", "进回收站", ::deleteDoc))
+        group = "写作"
         add(Command("zen", "Zen 模式", "Ctrl+.", ::toggleZen))
         add(Command("focus", "专注模式开关", "Ctrl+Shift+F", ::toggleFocus))
         add(Command("bigger", "字号放大", "Ctrl+=") { changeTextSize(+1f) })
         add(Command("smaller", "字号缩小", "Ctrl+-") { changeTextSize(-1f) })
         add(Command("vim", "Vim 模式开关", "Ctrl+Shift+V", ::toggleVim))
-        add(Command("trash", "删除当前文档", "进回收站", ::deleteDoc))
+        group = "同步与 AI"
+        add(Command("sync", "立即同步", if (sync.configured) "${sync.repo} · Ctrl+Shift+S" else "未配置", { syncNow(force = true) }))
+        add(Command("github-login", "用 GitHub 登录（同步）", "手机或电脑上输入验证码，不用打 token", ::loginGitHub))
+        add(Command("sync-settings", "GitHub 同步设置", if (sync.configured) sync.repo else "未配置", ::showSyncConfig))
+        add(Command("ai", "AI 助手", "Ctrl+J", ::showAi))
+        add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "未配置", ::showAiConfig))
+        add(Command("ai-prompts", "编辑 AI 指令", Prompts.FILE_NAME, ::editPrompts))
+        add(Command("paste", "从其他设备粘贴", "在手机或电脑上填写，传到这台设备", ::showPaste))
+        group = "其他"
+        add(Command("settings", "设置", "Ctrl+,", ::showSettings))
         if (!store.isPublic) add(Command("access", "授权：把文档存到 Documents/momoda", "", ::requestStorageAccess))
         updates.latest?.let { r -> add(Command("install-update", "安装新版本 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
         add(Command("check-update", "检查更新", if (updates.configured) "" else "尚未配置发布地址") { checkForUpdates(force = true) })
@@ -611,11 +643,20 @@ class MainActivity : Activity() {
 
     /** 命令面板：最近用过的排在前面（DESIGN §3.2）。 */
     private fun showPalette() {
-        val recent = ui.getString("recentCommands", "")!!.split(',').filter { it.isNotEmpty() }
-        val cmds = commands().sortedBy { c -> recent.indexOf(c.id).let { if (it < 0) Int.MAX_VALUE else it } }
-        InkList.show(this, "命令", cmds.map { InkItem(it.label, it.shortcut) }, font, onDismiss = ::returnToEditor) { i ->
-            val c = cmds[i]
-            ui.edit().putString("recentCommands", (listOf(c.id) + recent.filter { it != c.id }).take(8).joinToString(",")).apply()
+        val cmds = commands()
+        val byId = cmds.associateBy { it.id }
+        val groups = cmds.groupBy { it.group }.map { (g, list) -> g to list.map { it.id } }
+        val uses = PaletteLayout.parseUses(ui.getString("commandUses", "")!!)
+        val entries = PaletteLayout.layout(groups, uses, neverFrequent = setOf("trash"))
+        val items = entries.map { e ->
+            when (e) {
+                is PaletteLayout.Entry.Header -> InkItem(e.title, header = true)
+                is PaletteLayout.Entry.Item -> byId.getValue(e.id).let { InkItem(it.label, it.shortcut, searchable = e.searchable) }
+            }
+        }
+        InkList.show(this, "命令", items, font, onDismiss = ::returnToEditor) { i ->
+            val c = byId.getValue((entries[i] as PaletteLayout.Entry.Item).id)
+            ui.edit().putString("commandUses", PaletteLayout.formatUses(uses + (c.id to (uses[c.id] ?: 0) + 1))).apply()
             c.run()
         }
     }
@@ -642,6 +683,8 @@ class MainActivity : Activity() {
      * 否则有的输入法（汉王）会继续往已经关掉的弹窗里上屏，表现为“光标消失、字不知去向”。
      */
     private fun returnToEditor() {
+        // CapsLock 可能是在弹窗里抬起的，编辑器收不到：回到编辑器时一律当作已松开
+        capsHeld = false
         editor.requestFocus()
         getSystemService(InputMethodManager::class.java).restartInput(editor)
     }
@@ -722,16 +765,15 @@ class MainActivity : Activity() {
             SettingsPanel.Row("页眉页脚", { onOff(settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true),
             SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true),
             SettingsPanel.Row("Vim 模式", { onOff(settings.vim) }, { settings.vim = !settings.vim; applySettings() }, isToggle = true),
+            SettingsPanel.Row("CapsLock 当 Ctrl", { onOff(settings.capsAsCtrl) }, { settings.capsAsCtrl = !settings.capsAsCtrl; capsHeld = false }, isToggle = true),
             SettingsPanel.Row("自动检查更新", { onOff(settings.autoUpdate) }, { settings.autoUpdate = !settings.autoUpdate }, isToggle = true),
         )
         val version = packageManager.getPackageInfo(packageName, 0).versionName
         val footnote = buildString {
+            // 字体（OFL）和拼音数据（Unicode）的许可文件随 App 打包（assets/fonts/OFL.txt、assets/licenses），这里不再逐条列出
             appendLine("文档目录：${store.dir.absolutePath.removePrefix("/storage/emulated/0/")}")
             appendLine("外部字体：把 .ttf / .otf 放进 ${fonts.folder().absolutePath.removePrefix("/storage/emulated/0/")}")
-            appendLine()
-            appendLine("墨墨打 $version · GPL-3.0 开源 · momoda.zhixian.io")
-            appendLine("字体：霞鹜文楷屏幕阅读版（SIL Open Font License 1.1）")
-            append("拼音数据：Unicode Unihan")
+            append("墨墨打 $version · GPL-3.0 开源 · momoda.zhixian.io")
         }
         SettingsPanel(this, font, rows, footnote, onDismiss = ::returnToEditor).show()
     }
@@ -764,7 +806,7 @@ class MainActivity : Activity() {
 
     private fun showAiConfig() {
         save()
-        AiConfigPanel(this, font, llm, onDismiss = ::returnToEditor).show()
+        AiConfigPanel(this, font, llm, onPaste = ::showPaste, onDismiss = ::returnToEditor).show()
     }
 
     /** Ctrl+J：选指令 → 对选区（没有选区时是光标所在段落）调用模型 → 结果面板里确认。 */
@@ -820,7 +862,7 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---------- 从手机或电脑粘贴 ----------
+    // ---------- 从其他设备粘贴 ----------
 
     private fun showPaste() {
         save()
@@ -850,7 +892,7 @@ class MainActivity : Activity() {
     private fun showSyncConfig() {
         save()
         SyncConfigPanel(this, font, sync, ::makeSync, onLogin = ::loginGitHub, pickRepo = ::pickRepo,
-            manageUrl = installUrl(), onDismiss = ::returnToEditor).show()
+            manageUrl = installUrl(), onPaste = ::showPaste, onDismiss = ::returnToEditor).show()
     }
 
     private fun installUrl() = "${sync.webBase.trimEnd('/')}/apps/${BuildConfig.GITHUB_APP_SLUG}/installations/new"
@@ -971,6 +1013,7 @@ class MainActivity : Activity() {
     private fun toggleZen() {
         settings.chrome = !settings.chrome
         applySettings()
+        toast(if (settings.chrome) "已退出 Zen 模式" else "Zen 模式：隐藏页眉页脚，Ctrl+. 退出")
     }
 
     private fun changeTextSize(delta: Float) {
@@ -987,6 +1030,7 @@ class MainActivity : Activity() {
     private fun toggleFocus() {
         settings.focus = !settings.focus
         applySettings()
+        toast(if (settings.focus) "专注模式：只有光标所在的段落是黑色，Ctrl+Shift+F 关闭" else "已关闭专注模式")
     }
 
     private fun toggleDebug() {

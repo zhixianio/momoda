@@ -14,7 +14,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** “从手机或电脑粘贴”的弹窗：显示地址和配对码，收到内容后回调并自动关闭。 */
+/** “从其他设备粘贴”的弹窗：显示地址和配对码，收到内容后回调并自动关闭。 */
 class PastePanel(
     private val context: Context,
     private val typeface: Typeface?,
@@ -54,7 +54,7 @@ class PastePanel(
             setPadding(c.px(24), c.px(20), c.px(24), c.px(16))
             isFocusable = true
             isFocusableInTouchMode = true
-            addView(text(18f).apply { text = "从手机或电脑粘贴" })
+            addView(text(18f).apply { text = "从其他设备粘贴" })
             if (url == null) {
                 addView(text(16f).apply { text = "没有连上 Wi-Fi，找不到局域网地址。"; setPadding(0, c.px(16), 0, 0) })
             } else {

@@ -28,8 +28,17 @@ import android.widget.ListView
 import android.widget.TextView
 import kotlin.math.min
 
-/** 列表里的一项：[label] 是主文字，[detail] 是右侧浅灰的补充信息，[search] 用于搜索匹配。 */
-data class InkItem(val label: String, val detail: String = "", val search: String = label)
+/**
+ * 列表里的一项：[label] 是主文字，[detail] 是右侧浅灰的补充信息，[search] 用于搜索匹配。
+ * [header] 为 true 的是分组标题：不能选中，搜索时隐藏。[searchable] 为 false 的项只在没有搜索词时出现。
+ */
+data class InkItem(
+    val label: String,
+    val detail: String = "",
+    val search: String = label,
+    val header: Boolean = false,
+    val searchable: Boolean = true,
+)
 
 /**
  * 墨水屏友好的列表弹窗，用于命令面板和文档切换。
@@ -53,13 +62,15 @@ object InkList {
         val dp = context.resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
         val rowHeight = px(52)
-        val maxRows = ((context.resources.displayMetrics.heightPixels * 0.55f) / rowHeight).toInt().coerceAtLeast(4)
+        val headerHeight = px(34)
+        val maxHeight = (context.resources.displayMetrics.heightPixels * 0.55f).toInt().coerceAtLeast(rowHeight * 4)
 
         val dialog = Dialog(context)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         var shown: List<Int> = items.indices.toList()
-        var current = 0
+        fun selectable(position: Int) = shown.getOrNull(position)?.let { !items[it].header } ?: false
+        var current = shown.indices.firstOrNull(::selectable) ?: 0
         val frame = GradientDrawable().apply {
             setColor(Color.TRANSPARENT)
             setStroke(px(2), Color.BLACK)
@@ -76,7 +87,7 @@ object InkList {
             override fun getCount() = if (shown.isEmpty()) 1 else shown.size
             override fun getItem(position: Int) = shown.getOrNull(position)
             override fun getItemId(position: Int) = position.toLong()
-            override fun isEnabled(position: Int) = shown.isNotEmpty()
+            override fun isEnabled(position: Int) = selectable(position)
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val tv = (convertView as? TextView) ?: TextView(context).apply {
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
@@ -93,6 +104,20 @@ object InkList {
                     return tv
                 }
                 val item = items[shown[position]]
+                if (item.header) {
+                    tv.text = SpannableStringBuilder(item.label).apply {
+                        setSpan(RelativeSizeSpan(0.8f), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                    tv.setTextColor(Color.rgb(0x77, 0x77, 0x77))
+                    tv.minHeight = headerHeight
+                    tv.gravity = Gravity.BOTTOM
+                    tv.setPadding(px(20), 0, px(20), px(4))
+                    tv.background = null
+                    return tv
+                }
+                tv.minHeight = rowHeight
+                tv.gravity = Gravity.CENTER_VERTICAL
+                tv.setPadding(px(20), 0, px(20), 0)
                 tv.setTextColor(Color.BLACK)
                 tv.text = SpannableStringBuilder(item.label).apply {
                     if (item.detail.isNotEmpty()) {
@@ -120,16 +145,26 @@ object InkList {
             }
         }
 
+        fun heightOf(position: Int) = (if (shown.isNotEmpty() && items[shown[position]].header) headerHeight else rowHeight) + 1
+
         fun refresh() {
             adapter.notifyDataSetChanged()
-            val rows = min(adapter.count, maxRows)
-            list.layoutParams = list.layoutParams.apply { height = rows * (rowHeight + 1) }
-            list.setSelection(current)
+            var total = 0
+            for (p in 0 until adapter.count) {
+                val h = heightOf(p)
+                if (total + h > maxHeight) break
+                total += h
+            }
+            list.layoutParams = list.layoutParams.apply { height = total }
+            // 当前项上面紧挨着分组标题时，连标题一起露出来
+            list.setSelection(if (current > 0 && !selectable(current - 1) && shown.isNotEmpty()) current - 1 else current)
         }
 
         fun move(delta: Int) {
             if (shown.isEmpty()) return
-            current = (current + delta).coerceIn(0, shown.size - 1)
+            var next = current + delta
+            while (next in shown.indices && !selectable(next)) next += delta
+            if (next in shown.indices) current = next
             refresh()
         }
 
@@ -175,8 +210,9 @@ object InkList {
                     override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
                     override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
                     override fun afterTextChanged(s: Editable) {
-                        shown = Pinyin.matcher.filter(s.toString(), items.indices.toList()) { items[it].search }
-                        current = 0
+                        shown = if (s.isBlank()) items.indices.toList()
+                        else Pinyin.matcher.filter(s.toString(), items.indices.filter { !items[it].header && items[it].searchable }) { items[it].search }
+                        current = shown.indices.firstOrNull(::selectable) ?: 0
                         refresh()
                     }
                 })

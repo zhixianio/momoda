@@ -27,6 +27,8 @@ class SyncConfigPanel(
     private val pickRepo: ((String) -> Unit) -> Unit,
     /** 在 GitHub 上增减可访问仓库的地址。 */
     private val manageUrl: String,
+    /** 关掉这个面板，打开“从其他设备粘贴”：token 很长，在手机或电脑上填更方便。 */
+    private val onPaste: () -> Unit,
     private val onDismiss: () -> Unit,
 ) {
     fun show() {
@@ -143,6 +145,7 @@ class SyncConfigPanel(
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(0, c.px(14), 0, 0)
                 addView(c.inkButton("测试连接", typeface) { test() })
+                addView(c.inkButton("在其他设备上填写", typeface) { save(); dialog.dismiss(); onPaste() })
                 addView(View(c), LinearLayout.LayoutParams(0, 1, 1f))
                 addView(c.inkButton("取消", typeface) { dialog.dismiss() })
                 addView(c.inkButton("保存", typeface) { save(); dialog.dismiss() })
