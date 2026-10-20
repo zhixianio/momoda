@@ -4,18 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>墨墨打 · 墨水屏中文写作应用</title>
-<meta name="description" content="墨墨打（momoda）是专为 Android 墨水屏设计的中文写作应用，支持全键盘操作，开源，不收集数据。">
+<meta name="description" content="墨墨打（momoda）专为 Android 墨水屏设计的中文写作应用。所见即所得的 Markdown、全键盘操作、Vim 键位、GitHub 同步，开源免费。">
 <meta name="theme-color" content="#ffffff">
 <meta name="color-scheme" content="light">
 <meta property="og:title" content="墨墨打 · 墨水屏中文写作应用">
-<meta property="og:description" content="专为 Android 墨水屏设计的中文写作应用。">
-<meta property="og:image" content="https://momoda.zhixian.io/og.png">
+<meta property="og:description" content="专为 Android 墨水屏设计的中文写作应用。所见即所得的 Markdown、全键盘操作、Vim 键位、GitHub 同步，开源免费。">
+<meta property="og:image" content="https://momoda.zhixian.io/og.png?v=3955b84c">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="墨墨打：专为 Android 墨水屏设计的中文写作应用">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://momoda.zhixian.io/og.png?v=3955b84c">
 <meta property="og:url" content="https://momoda.zhixian.io/">
 <meta property="og:type" content="website">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="preload" href="fonts/wenkai-screen-subset.woff2?v=9b313461" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=fb5c0300">
+<link rel="preload" href="fonts/wenkai-screen-subset.woff2?v=2fa6c5ca" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css?v=7a76d136">
 <script src="site.js?v=ef0b71b2" defer></script>
 </head>
 <body>
@@ -35,7 +40,7 @@
   <svg class="mark mark-large blinker" viewBox="31 37 46 33" role="img" aria-label="墨墨打的图标：两个墨点和一道光标"><g class="eyes"><circle cx="39.78" cy="59.33" r="7.11"/><circle cx="57.56" cy="59.33" r="7.11"/></g><rect x="70.23" y="38.89" width="4.88" height="29.33" rx="2.44"/></svg>
   <h1>墨墨打</h1>
   <p class="tagline">专为 Android 墨水屏设计的中文写作应用<span class="cursor" aria-hidden="true"></span></p>
-  <p class="lede meta">全键盘操作<span class="sep">·</span>开源<span class="sep">·</span>不收集数据</p>
+  <p class="lede meta">全键盘<span class="sep">·</span>Vim<span class="sep">·</span>GitHub 同步<span class="sep">·</span>开源免费</p>
   <p class="actions">
     <a class="button" href="#download">下载</a>
     <a class="quiet" href="https://github.com/zhixianio/momoda">源代码</a>
@@ -56,30 +61,38 @@
 
 <section class="core">
   <div>
-    <h2><span class="mk">## </span>为中文优化</h2>
-    <p>标点避头尾，中文引号使用全角字形。内置霞鹜文楷，也可以换成自己的字体：把 <code>.ttf</code> 或 <code>.otf</code> 放进 <code>Documents/momoda/fonts</code> 即可。字数按汉字和英文单词统计，命令和文档支持拼音首字母搜索。</p>
+    <h2><span class="mk">## </span>为墨水屏而做</h2>
+    <p>光标常亮不闪，写满一页时整页翻过，从不滚动，打字时屏幕上只有新字出现。专注模式下只有当前段落是黑色，<kbd>Ctrl</kbd> <kbd>.</kbd> 隐藏页眉页脚。中文排版细节也照顾到了：标点避头尾，引号用全角字形，内置霞鹜文楷，也可以把自己的 <code>.ttf</code> / <code>.otf</code> 放进 <code>Documents/momoda/fonts</code>。</p>
   </div>
   <div>
-    <h2><span class="mk">## </span>极简专注</h2>
-    <p>界面只有正文。光标常亮不闪，写满一页时整页翻过，不滚动。专注模式下只有当前段落为黑色；<kbd>Ctrl</kbd> <kbd>.</kbd> 隐藏页眉页脚。</p>
+    <h2><span class="mk">## </span>所见即所得的 Markdown</h2>
+    <p>标题、粗体、斜体、引用、列表、分隔线边写边渲染。<code>#</code>、<code>**</code> 这些标记留在原处、只是变浅，光标移动时排版不会跳。文件就是标准的 <code>.md</code>，换任何编辑器都能打开。</p>
   </div>
   <div>
     <h2><span class="mk">## </span>全键盘操作</h2>
-    <p>所有功能都能用键盘完成：常用操作有快捷键，其余都在 <kbd>Ctrl</kbd> <kbd>K</kbd> 命令面板里。CapsLock 可以改成 Ctrl，或与 Ctrl 互换（系统实体键盘布局，所有 App 里都生效）。可选 Vim 模式，支持常用的移动、删除和撤销。</p>
+    <p>不用鼠标，也不用触控。常用操作都有快捷键，其余都在 <kbd>Ctrl</kbd> <kbd>K</kbd> 命令面板里，命令和文档都支持拼音首字母：输入 <code>tb</code> 就是“立即同步”。中文输入法打开时，快捷键也不会被吞掉。</p>
   </div>
   <div>
-    <h2><span class="mk">## </span>存储与同步</h2>
-    <p>文档以 <code>.md</code> 文件保存在 <code>Documents/momoda</code>，首行即标题，卸载应用不会删除。可选 GitHub 同步，在手机或电脑上输入验证码即可登录；两端同时修改时，两个版本都会保留。</p>
+    <h2><span class="mk">## </span>Vim 键位</h2>
+    <p><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>V</kbd> 打开 Vim 模式：<code>hjkl</code>、<code>w</code> <code>b</code>、<code>0</code> <code>$</code>、<code>gg</code> <code>G</code>、<code>x</code>、<code>dd</code>、<code>u</code>、<kbd>Ctrl</kbd> <kbd>R</kbd>，以及 <code>i</code> <code>a</code> <code>A</code> <code>I</code> <code>o</code> <code>O</code>。不管用哪个输入法，<kbd>Esc</kbd> 都能立刻回到普通模式。</p>
   </div>
   <div>
-    <h2><span class="mk">## </span>AI 助手</h2>
-    <p>支持任何 OpenAI 兼容接口，包括本地的 Ollama。润色、续写、精简、翻译，也可以自定义指令。结果确认后才写入正文。</p>
+    <h2><span class="mk">## </span>CapsLock 换 Ctrl</h2>
+    <p>墨墨打自带两个实体键盘布局：“CapsLock 当 Ctrl”和“CapsLock 与 Ctrl 互换”，在系统设置的实体键盘里选用，所有 App 里都生效。</p>
+  </div>
+  <div>
+    <h2><span class="mk">## </span>GitHub 同步</h2>
+    <p>文档都是 <code>Documents/momoda</code> 里的 <code>.md</code> 文件，卸载应用也不会删除。可选同步到自己的 GitHub 仓库：在手机或电脑上输入屏幕上的验证码即可登录，不用在墨水屏上打 token。两端同时修改时，两个版本都会保留。</p>
+  </div>
+  <div>
+    <h2><span class="mk">## </span>可选的 AI 助手</h2>
+    <p>默认关闭。需要时填一个 OpenAI 兼容的接口，包括本地的 Ollama：润色、续写、精简、翻译，也可以写自己的指令。结果确认后才写入正文。</p>
   </div>
 </section>
 
 <section class="privacy">
-  <h2><span class="mk">## </span>开源与隐私</h2>
-  <p>以 <a href="https://github.com/zhixianio/momoda/blob/main/LICENSE">GPL-3.0</a> 开源。不需要账号，不收集任何数据。API key 和 GitHub 凭证只保存在本机。</p>
+  <h2><span class="mk">## </span>开源免费</h2>
+  <p>以 <a href="https://github.com/zhixianio/momoda/blob/main/LICENSE">GPL-3.0</a> 开源，免费使用。不需要账号，不收集任何数据；API key 和 GitHub 凭证只保存在本机。</p>
 </section>
 
 <section id="download" class="download">
