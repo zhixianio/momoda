@@ -823,12 +823,17 @@ class MainActivity : Activity() {
                 toast("已登录，同步到 $repo")
                 syncNow(force = true)
             }
-            when {
-                repos.isEmpty() -> toast("授权成功，但没有可访问的仓库：请在 GitHub 上把这个 App 安装到你的笔记仓库")
-                repos.size == 1 -> finish(repos.single())
-                else -> InkList.show(this, "同步到哪个仓库？", repos.map { InkItem(it) }, font, searchHint = null, onDismiss = ::returnToEditor) { i ->
-                    finish(repos[i])
+            fun choose(list: List<String>) {
+                if (list.size == 1) finish(list.single())
+                else InkList.show(this, "同步到哪个仓库？", list.map { InkItem(it) }, font, searchHint = null, onDismiss = ::returnToEditor) { i ->
+                    finish(list[i])
                 }
+            }
+            if (repos.isNotEmpty()) choose(repos)
+            else {
+                // 还没把 App 装到任何仓库：显示安装地址，装好后自动继续
+                val installUrl = "${sync.webBase.trimEnd('/')}/apps/${BuildConfig.GITHUB_APP_SLUG}/installations/new"
+                InstallGuidePanel(this, font, installUrl, check = { auth.repositories(token) }, onRepos = ::choose, onDismiss = ::returnToEditor).show()
             }
         }, onDismiss = ::returnToEditor).show()
     }

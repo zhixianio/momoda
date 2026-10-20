@@ -18,7 +18,9 @@ android {
         // 留空表示还没有发布地址，检查更新功能自动关闭
         buildConfigField("String", "UPDATE_API", "\"\"")
         // GitHub 同步登录用的 GitHub App 的 Client ID（公开信息，不是密钥）；留空则只能手动填 token
-        buildConfigField("String", "GITHUB_CLIENT_ID", "\"Iv23liK9KsMUubPabWgP\"") // GitHub App: momoda-sync-zhixianio
+        // GitHub App：momoda-sync（公开，任何人都可以安装到自己的仓库）
+        buildConfigField("String", "GITHUB_CLIENT_ID", "\"Iv23liK9KsMUubPabWgP\"")
+        buildConfigField("String", "GITHUB_APP_SLUG", "\"momoda-sync\"")
     }
 
     buildFeatures {
