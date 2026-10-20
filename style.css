@@ -1,0 +1,165 @@
+/* 墨墨打官网：和 App 一样，白底黑字、不做动画、标记淡显、版心每行约 30 字 */
+
+@font-face {
+  font-family: "WenKai Screen";
+  src: url("fonts/wenkai-screen-subset.woff2") format("woff2");
+  font-display: swap;
+}
+
+:root {
+  --ink: #111111;
+  --dim: #9c9c9c;      /* App 里淡显的灰 */
+  --rule: #e4e4e4;
+  --paper: #ffffff;
+  --measure: 30em;     /* App 默认版心：每行 30 字 */
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background: var(--paper);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "WenKai Screen", "LXGW WenKai Screen", "LXGW WenKai", "Kaiti SC", "STKaiti", "KaiTi", serif;
+  font-size: 19px;
+  line-height: 1.85;
+  font-feature-settings: "kern";
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: underline; text-decoration-color: var(--dim); text-underline-offset: .22em; text-decoration-thickness: 1px; }
+a:hover { text-decoration-color: var(--ink); }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+/* 页眉页脚：和 App 一样是浅灰小字 */
+.running {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1em;
+  padding: 18px 28px;
+  font-size: 14px;
+  color: #6f6f6f;
+}
+.running a { text-decoration: none; }
+.running a:hover { color: var(--ink); }
+.running nav { display: flex; gap: 1.5em; }
+.brand { display: inline-flex; align-items: center; gap: .5em; color: var(--ink); }
+.mark { width: 1.6em; height: auto; fill: currentColor; }
+footer.running { margin-top: 120px; padding-bottom: 32px; flex-wrap: wrap; }
+
+main { padding: 0 16px; }
+main > section, .device, .gallery { max-width: var(--measure); margin-left: auto; margin-right: auto; }
+
+/* 开场 */
+.hero { padding: 96px 0 40px; }
+.mark-large { width: 92px; display: block; margin-bottom: 36px; color: var(--ink); }
+h1 { font-size: 46px; line-height: 1.25; margin: 0 0 .35em; font-weight: 700; letter-spacing: .04em; }
+.tagline { font-size: 25px; line-height: 1.6; margin: 0 0 1.1em; }
+.cursor { display: inline-block; width: 2px; height: 1.05em; background: var(--ink); vertical-align: -.15em; margin-left: .12em; }
+.lede { margin: 0 0 2em; }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 28px; margin: 0; }
+.button {
+  display: inline-flex; align-items: baseline; gap: .7em;
+  padding: .55em 1.1em;
+  border: 2px solid var(--ink);
+  text-decoration: none;
+  background: var(--paper);
+}
+.button:hover { background: var(--ink); color: var(--paper); }
+.button:hover .soon { color: #c8c8c8; }
+.soon { font-size: .78em; color: var(--dim); }
+.quiet { text-decoration: none; color: #555; }
+.quiet:hover { color: var(--ink); }
+
+/* 截图：深色边框，像一台墨水屏阅读器 */
+.device { margin-top: 48px; margin-bottom: 96px; max-width: 560px; }
+.bezel { background: #1d1d1d; padding: 18px 18px 30px; border-radius: 22px; }
+.bezel img { display: block; width: 100%; height: auto; border-radius: 3px; }
+figcaption { font-size: 14px; color: #6f6f6f; margin-top: 14px; text-align: center; }
+
+/* 小节：标题前面带淡显的 ## ，和 App 里的 Markdown 一样 */
+section { margin-bottom: 88px; }
+h2 { font-size: 27px; line-height: 1.4; margin: 0 0 .8em; font-weight: 700; }
+.mk { color: var(--dim); font-weight: 400; }
+p { margin: 0 0 1em; }
+
+.points { margin: 1.8em 0 0; }
+.points dt { font-weight: 700; margin-top: 1.4em; }
+.points dt:first-child { margin-top: 0; }
+.points dd { margin: .2em 0 0; }
+
+ul.plain { list-style: none; padding: 0; margin: 1.2em 0 0; }
+ul.plain li { position: relative; padding-left: 1.3em; margin-bottom: .55em; }
+ul.plain li::before { content: "-"; position: absolute; left: 0; color: var(--dim); }
+
+code, kbd, pre { font-family: inherit; }
+code { font-size: .92em; padding: 0 .15em; }
+kbd {
+  display: inline-block;
+  font-size: .78em;
+  line-height: 1.5;
+  padding: 0 .45em;
+  border: 1px solid #b9b9b9;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  vertical-align: .08em;
+}
+
+pre.tree {
+  /* 制表符在中文字体里是全角宽度，对不齐；目录树用等宽字体，中文落回文楷 */
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "WenKai Screen", monospace;
+  font-size: 15px;
+  line-height: 1.75;
+  margin: 0 0 1.4em;
+  padding: 1.1em 1.3em;
+  border-left: 3px solid var(--ink);
+  background: #f7f7f7;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* 截图墙：三张并排，宽屏时比正文稍宽 */
+.gallery {
+  max-width: 960px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 28px;
+  margin-bottom: 96px;
+}
+.gallery figure { margin: 0; }
+.gallery img { display: block; width: 100%; height: auto; border: 1px solid var(--rule); }
+
+.download { padding-top: 8px; }
+.download .actions { margin: 1.4em 0 1.6em; }
+.note { font-size: 15px; color: #6f6f6f; }
+
+@media (max-width: 720px) {
+  body { font-size: 17px; }
+  .running { padding: 14px 16px; }
+  .hero { padding-top: 56px; }
+  .mark-large { width: 72px; margin-bottom: 28px; }
+  h1 { font-size: 38px; }
+  .tagline { font-size: 21px; }
+  h2 { font-size: 23px; }
+  section { margin-bottom: 64px; }
+  .device { margin-bottom: 64px; }
+  .bezel { padding: 10px 10px 18px; border-radius: 14px; }
+  .gallery { grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 64px; }
+  .gallery figure:last-child { grid-column: 1 / -1; max-width: calc(50% - 7px); margin: 0 auto; }
+  figcaption { font-size: 13px; }
+  pre.tree { font-size: 14px; padding: .9em 1em; }
+  footer.running { margin-top: 72px; }
+}
+
+/* 中文引号：霞鹜文楷屏幕阅读版的“”默认是半角宽度，紧挨汉字时换成全角字形（同 App） */
+.q { font-feature-settings: "fwid"; }
+.gallery a { display: block; }

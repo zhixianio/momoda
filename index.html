@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>墨墨打 · 为墨水屏写中文</title>
+<meta name="description" content="墨墨打（momoda）是为 Android 墨水屏设计的中文写作 App。即开即打，翻页不滚动，光标不闪，键盘和笔都能完整操作。">
+<meta name="theme-color" content="#ffffff">
+<meta name="color-scheme" content="light">
+<meta property="og:title" content="墨墨打 · 为墨水屏写中文">
+<meta property="og:description" content="为 Android 墨水屏设计的中文写作 App。即开即打。">
+<meta property="og:image" content="https://momoda.zhixian.io/og.png">
+<meta property="og:url" content="https://momoda.zhixian.io/">
+<meta property="og:type" content="website">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preload" href="fonts/wenkai-screen-subset.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="running">
+  <a href="./" class="brand">
+    <svg class="mark" viewBox="31 37 46 33" aria-hidden="true"><circle cx="39.78" cy="59.33" r="7.11"/><circle cx="57.56" cy="59.33" r="7.11"/><rect x="70.23" y="38.89" width="4.88" height="29.33" rx="2.44"/></svg>
+    墨墨打
+  </a>
+  <nav><a href="#download">下载</a><a href="https://github.com/zhixianio/momoda">GitHub</a></nav>
+</header>
+
+<main>
+
+<section class="hero">
+  <svg class="mark mark-large" viewBox="31 37 46 33" role="img" aria-label="墨墨打的图标：两个墨点和一道光标"><circle cx="39.78" cy="59.33" r="7.11"/><circle cx="57.56" cy="59.33" r="7.11"/><rect x="70.23" y="38.89" width="4.88" height="29.33" rx="2.44"/></svg>
+  <h1>墨墨打</h1>
+  <p class="tagline">为墨水屏写中文。即开即打。<span class="cursor" aria-hidden="true"></span></p>
+  <p class="lede">一个为 Android 墨水屏设计的中文写作 App。没有首页，没有启动画面：打开它，就回到上次的文档，光标停在上次的位置。</p>
+  <p class="actions">
+    <a class="button" href="#download">下载 APK<span class="soon">即将发布</span></a>
+    <a class="quiet" href="https://github.com/zhixianio/momoda">源代码 →</a>
+  </p>
+</section>
+
+<figure class="device">
+  <div class="bezel"><img src="img/markdown.webp" width="1000" height="1333" alt="墨墨打的编辑界面：Markdown 标记显示为浅灰，标题加粗；光标所在段落是黑色，其余段落是浅灰色"></div>
+  <figcaption>Markdown 标记淡显；光标所在的段落是黑色，其余是浅灰。</figcaption>
+</figure>
+
+<section>
+  <h2><span class="mk">## </span>安静的屏幕</h2>
+  <p>墨水屏上让人难受的，不是刷新慢，而是画面上那些没有意义的变化。墨墨打做的第一件事，是让屏幕在你打字时纹丝不动：只有新字出现。</p>
+
+  <dl class="points">
+    <dt>翻页，不滚动</dt>
+    <dd>写到页底时，一次翻半页；回看时整页翻，保留两行衔接。没有连续滚动，也没有惯性。</dd>
+    <dt>光标不闪</dt>
+    <dd>系统光标每半秒闪一次，墨水屏就跟着刷新一次。墨墨打的光标常亮，停下来思考时，屏幕完全静止。</dd>
+    <dt>专注模式</dt>
+    <dd>光标所在的段落是黑色，其余是浅灰。换段时，只有两段文字改变颜色。翻页回看时自动暂停。</dd>
+    <dt>Markdown 淡显</dt>
+    <dd><code>#</code>、<code>**</code>、<code>&gt;</code> 留在原处，只是变浅；标题、粗体、引用、列表照常渲染。光标移动时排版不变。文件就是标准的 <code>.md</code>。</dd>
+    <dt>键盘和笔</dt>
+    <dd>每个功能都能只用键盘完成，也都能用笔点到。<kbd>Ctrl</kbd> <kbd>K</kbd> 打开命令面板，<kbd>Ctrl</kbd> <kbd>O</kbd> 切换文档，都支持拼音首字母：输入 <code>xj</code> 就是<span class="q">“新建”</span>。</dd>
+  </dl>
+</section>
+
+<div class="gallery">
+  <figure>
+    <a href="img/switch.webp"><img src="img/switch.webp" width="1000" height="1333" loading="lazy" alt="快速切换文档的弹窗：标题、修改时间和字数，可以用拼音首字母筛选"></a>
+    <figcaption>快速切换 <kbd>Ctrl</kbd> <kbd>O</kbd></figcaption>
+  </figure>
+  <figure>
+    <a href="img/palette.webp"><img src="img/palette.webp" width="760" height="1014" loading="lazy" alt="命令面板：每条命令后面标注快捷键或说明"></a>
+    <figcaption>命令面板 <kbd>Ctrl</kbd> <kbd>K</kbd></figcaption>
+  </figure>
+  <figure>
+    <a href="img/settings.webp"><img src="img/settings.webp" width="1000" height="1333" loading="lazy" alt="设置页占据屏幕右侧，左侧正文实时预览"></a>
+    <figcaption>设置只占右半边，左边实时预览</figcaption>
+  </figure>
+</div>
+
+<section>
+  <h2><span class="mk">## </span>中文排版</h2>
+  <p>为中文写作而调，而不是把英文编辑器翻译一遍。</p>
+  <ul class="plain">
+    <li>标点避头尾：句号、逗号、右括号不会出现在行首。</li>
+    <li>紧挨着汉字的引号用全角字形，<span class="q">“像这样”</span>；英文里的 "quotes" 保持原样。</li>
+    <li>回车就是分段：写进文件的是一个空行，在任何 Markdown 渲染器里都是真正的段落。段距可以调。<kbd>Shift</kbd> <kbd>Enter</kbd> 只换行，适合写诗。</li>
+    <li>版心默认每行 30 字，横屏也不会变宽，可以在 24 到 40 字之间调整。</li>
+    <li>段首缩进两字，可选。</li>
+    <li>字数统计：一个汉字算一字，一个英文单词算一字。</li>
+    <li>内置霞鹜文楷屏幕阅读版。想用别的字体，把 <code>.ttf</code> 或 <code>.otf</code> 放进 <code>Documents/momoda/fonts/</code> 就行。</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="mk">## </span>文档就是文件</h2>
+  <pre class="tree" aria-label="文件夹结构">Documents/momoda/
+├── 春天的随笔.md
+├── 2026-10-20.md   <span class="mk">还没有标题的文档</span>
+├── fonts/          <span class="mk">外部字体</span>
+└── .trash/         <span class="mk">回收站</span></pre>
+  <p>第一行就是标题，文件名跟着标题走。所有文档都是纯文本的 <code>.md</code>，卸载 App 后依然在，USB、文件管理器、同步工具都能直接读写。</p>
+  <p>自动保存时先写临时文件再替换，断电也不会留下半个文件。如果文件被别的程序改过，墨墨打不会覆盖它，你的版本会另存一份。</p>
+</section>
+
+<section>
+  <h2><span class="mk">## </span>AI 和同步，都是可选的</h2>
+  <p>默认什么都不连。需要的时候再打开，而且只授权最少的权限。</p>
+
+  <dl class="points">
+    <dt>AI 助手 <kbd>Ctrl</kbd> <kbd>J</kbd></dt>
+    <dd>填一个 OpenAI 兼容的地址就能用：OpenAI、OpenRouter，或者家里经 Tailscale 接入的 Ollama。润色、续写、精简、翻译，也可以在 <code>prompts.md</code> 里写自己的指令。结果先显示在底部面板，你按 <kbd>Enter</kbd> 才会替换：<strong>AI 不会直接改动正文</strong>。API key 用 Android Keystore 加密，只保存在设备上。</dd>
+    <dt>GitHub 同步</dt>
+    <dd>在手机或电脑上输入屏幕上的 8 位验证码就能登录，不用在墨水屏上打 token。通过公开的 GitHub App<span class="q">“墨墨打同步”</span>授权，<strong>只能读写你选中的仓库里的内容</strong>，没有其他权限；登录凭证只保存在你的设备上，作者拿不到。两边都改了同一篇时，你的版本优先，另一版另存为副本，任何一方都不会丢。</dd>
+    <dt>从手机粘贴</dt>
+    <dd>长文本、接口地址、token 不想在墨水屏上打？在同一个 Wi‑Fi 下，用手机浏览器输入配对码，直接传过去。</dd>
+  </dl>
+</section>
+
+<section>
+  <h2><span class="mk">## </span>输入法</h2>
+  <p>推荐 <a href="https://github.com/fcitx5-android/fcitx5-android">fcitx5-android</a>（小企鹅输入法）配合小鹤双拼：开源，实体键盘支持好。USB 和蓝牙键盘都能直接用。墨墨打不包含输入法，需要另外安装。</p>
+  <p>快捷键在输入法之前处理：中文状态下按 <kbd>Ctrl</kbd> 组合键不会被输入法吞掉，<kbd>Esc</kbd> 也不会把 App 关掉。</p>
+</section>
+
+<section>
+  <h2><span class="mk">## </span>开源与隐私</h2>
+  <ul class="plain">
+    <li>源代码公开在 <a href="https://github.com/zhixianio/momoda">GitHub</a>。开源许可：待定。</li>
+    <li>没有账号，没有统计，没有广告，不收集任何数据。</li>
+    <li>只有三种情况会联网：检查更新（可以在设置里关闭），以及你自己配置的 AI 和 GitHub 同步。</li>
+    <li>崩溃记录只存在本机。要不要导出、发给谁，由你决定。</li>
+  </ul>
+</section>
+
+<section id="download" class="download">
+  <h2><span class="mk">## </span>下载</h2>
+  <p>第一个版本即将在 GitHub Releases 发布。</p>
+  <p class="actions">
+    <a class="button" href="https://github.com/zhixianio/momoda/releases">GitHub Releases<span class="soon">即将发布</span></a>
+  </p>
+  <p class="note">需要 Android 8.0 或更高版本。在汉王 N10 Pro 上开发和测试；其他墨水屏设备、普通的 Android 平板和手机也能用。</p>
+</section>
+
+</main>
+
+<footer class="running">
+  <span>墨墨打 momoda</span>
+  <span>字体：<a href="https://github.com/lxgw/LxgwWenKai-Screen">霞鹜文楷屏幕阅读版</a>（<a href="fonts/OFL.txt">SIL OFL 1.1</a>）</span>
+</footer>
+
+</body>
+</html>
