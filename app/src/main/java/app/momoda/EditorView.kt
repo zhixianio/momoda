@@ -69,6 +69,8 @@ class EditorView(context: Context) : EditText(context) {
     private var ready = false
 
     init {
+        // 长文档前部打字时不把后面全文重排一遍（见 QuietEditable）
+        setEditableFactory(QuietEditable.Factory)
         setBackgroundColor(Color.WHITE)
         setTextColor(Color.BLACK)
         highlightColor = Color.rgb(0xCC, 0xCC, 0xCC)
