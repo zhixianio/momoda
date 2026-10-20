@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把霞鹜文楷屏幕阅读版子集化为网页字体：只保留站内 HTML 用到的字符。
+"""把霞鹜文楷屏幕阅读版子集化为网页字体：只保留站内 HTML 和 JS 用到的字符。
 
 用法（需要 fonttools 和 brotli：pip install fonttools brotli）：
     python3 tools/build-font.py /path/to/LXGWWenKaiScreen.ttf
@@ -20,8 +20,9 @@ OUT = ROOT / "fonts" / "wenkai-screen-subset.woff2"
 chars = set(chr(c) for c in range(0x20, 0x7F))  # 基本拉丁字母和符号始终保留
 chars |= set("，。、；：？！“”‘’（）《》〈〉【】—…·～　├└─│→")
 for html in ROOT.glob("*.html"):
-    text = unescape(re.sub(r"<[^>]+>", " ", html.read_text(encoding="utf-8")))
-    chars |= set(text)
+    chars |= set(unescape(re.sub(r"<[^>]+>", " ", html.read_text(encoding="utf-8"))))
+for js in ROOT.glob("*.js"):  # 打字演示的文字在 site.js 里，原样全部收进来
+    chars |= set(js.read_text(encoding="utf-8"))
 chars = {c for c in chars if c.isprintable() or c == "　"}
 
 options = subset.Options()
