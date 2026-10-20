@@ -383,7 +383,9 @@ class EditorView(context: Context) : EditText(context) {
         if (tooLow || tooHigh) {
             // 专注模式下把当前行放到屏幕中部，视线停在中间；否则放到上部 1/4，一次能多写半屏
             val anchor = if (focusShown) (height * 0.4f).toInt() else height / 4
-            scrollTo(0, max(0, top - anchor))
+            // 对齐到行首：屏幕顶端不出现半行字（和 [page] 一样）
+            val y = max(0, top - anchor)
+            scrollTo(0, if (y > 0) l.getLineTop(l.getLineForVertical(y)) else 0)
         }
     }
 
