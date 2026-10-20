@@ -48,6 +48,30 @@ class MarkdownStylerTest {
     }
 
     @Test
+    fun unchangedStylesAreNotRemovedAndAddedAgain() {
+        // 每删、加一个全角引号或标题样式，DynamicLayout 都要重排整段：满是引号的段落里打一个字曾要 1.5 秒
+        val t = SpanText("# 标题\n\n他说：“你好”，又说：“再见”。**粗体**\n\n> 引用\n\n- 列表")
+        styler.restyleAll(t)
+        t.sets = 0; t.removes = 0
+        styler.restyle(t, 8, 12)
+        styler.restyleAll(t)
+        assertEquals(0, t.sets)
+        assertEquals(0, t.removes)
+    }
+
+    @Test
+    fun changedLineGetsNewStylesOnly() {
+        val t = SpanText("他说：“你好”，普通")
+        styler.restyleAll(t)
+        // 行尾加了粗体：引号样式不动，只加粗体和两个标记
+        t.replace(t.length, t.length, "**粗**")
+        t.sets = 0; t.removes = 0
+        styler.restyle(t, 0, t.length)
+        assertEquals(3, t.sets)
+        assertEquals(0, t.removes)
+    }
+
+    @Test
     fun restyleAllIsIdempotent() {
         val t = SpanText("# 标题\n\n> 引用\n\n- 列表\n\n---\n")
         styler.restyleAll(t)
@@ -63,6 +87,8 @@ class SpanText(text: String) : Editable {
 
     private val sb = StringBuilder(text)
     val spans = mutableListOf<Span>()
+    var sets = 0
+    var removes = 0
 
     override val length get() = sb.length
     override fun get(index: Int) = sb[index]
@@ -71,10 +97,11 @@ class SpanText(text: String) : Editable {
     override fun getChars(start: Int, end: Int, dest: CharArray, destoff: Int) = sb.toString().toCharArray(dest, destoff, start, end).let { }
 
     override fun setSpan(what: Any, start: Int, end: Int, flags: Int) {
-        removeSpan(what)
+        sets++
+        spans.removeAll { it.what === what }
         spans += Span(what, start, end, flags)
     }
-    override fun removeSpan(what: Any) { spans.removeAll { it.what === what } }
+    override fun removeSpan(what: Any) { removes++; spans.removeAll { it.what === what } }
 
     @Suppress("UNCHECKED_CAST")
     override fun <T : Any?> getSpans(start: Int, end: Int, type: Class<T>?): Array<T> {

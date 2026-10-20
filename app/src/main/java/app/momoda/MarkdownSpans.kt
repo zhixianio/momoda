@@ -14,7 +14,10 @@ import android.text.style.LineBackgroundSpan
 import android.text.style.MetricAffectingSpan
 
 /** 墨墨打自己加的 Markdown 样式。实现了这个接口的 Span 不会被“去掉外来样式”清理掉。 */
-interface MdSpan
+interface MdSpan {
+    /** 类型和参数都相同的两个样式可以互相替代：重排时已有的就留着，不删掉重加（见 [MarkdownStyler]）。 */
+    val key: Any get() = javaClass
+}
 
 private const val MARKER_GRAY = 0xFF9A9A9A.toInt()
 private const val RULE_GRAY = 0xFF888888.toInt()
@@ -31,6 +34,7 @@ class MarkerSpan : ForegroundColorSpan(MARKER_GRAY), MdSpan
 
 /** 标题：加大并加粗（霞鹜文楷只有一个字重，用合成粗体）。 */
 class HeadingSpan(private val scale: Float) : MetricAffectingSpan(), MdSpan {
+    override val key get() = listOf(javaClass, scale)
     override fun updateDrawState(tp: TextPaint) = apply(tp)
     override fun updateMeasureState(tp: TextPaint) = apply(tp)
     private fun apply(tp: TextPaint) {
@@ -52,6 +56,7 @@ class ItalicSpan : MetricAffectingSpan(), MdSpan {
 
 /** 引用：左侧一条竖线，正文右移。 */
 class QuoteBarSpan(private val margin: Int, private val barWidth: Int) : LeadingMarginSpan, MdSpan {
+    override val key get() = listOf(javaClass, margin, barWidth)
     override fun getLeadingMargin(first: Boolean) = margin
     override fun drawLeadingMargin(
         c: Canvas, p: Paint, x: Int, dir: Int, top: Int, baseline: Int, bottom: Int,
@@ -69,6 +74,7 @@ class QuoteBarSpan(private val margin: Int, private val barWidth: Int) : Leading
 
 /** 列表悬挂缩进：折行后的文字和第一行的正文对齐，而不是和 `- ` 对齐。 */
 class HangingIndentSpan(private val rest: Int) : LeadingMarginSpan, MdSpan {
+    override val key get() = listOf(javaClass, rest)
     override fun getLeadingMargin(first: Boolean) = if (first) 0 else rest
     override fun drawLeadingMargin(
         c: Canvas, p: Paint, x: Int, dir: Int, top: Int, baseline: Int, bottom: Int,
@@ -87,6 +93,7 @@ class FullWidthQuoteSpan : MetricAffectingSpan(), MdSpan {
 
 /** 段首缩进两字。 */
 class IndentSpan(private val width: Int) : LeadingMarginSpan, MdSpan {
+    override val key get() = listOf(javaClass, width)
     override fun getLeadingMargin(first: Boolean) = if (first) width else 0
     override fun drawLeadingMargin(
         c: Canvas, p: Paint, x: Int, dir: Int, top: Int, baseline: Int, bottom: Int,
@@ -100,6 +107,7 @@ class IndentSpan(private val width: Int) : LeadingMarginSpan, MdSpan {
  * （按文字的大致中线画时，霞鹜文楷的 `-` 偏下，会在线的下方露出三个短横。）
  */
 class RuleSpan(private val minThickness: Float) : LineBackgroundSpan, MdSpan {
+    override val key get() = listOf(javaClass, minThickness)
     private val dash = Rect()
 
     override fun drawBackground(
@@ -128,8 +136,8 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
         var stop = to.coerceIn(0, text.length)
         // 编辑会把样式拉长到相邻几行：SpannableStringBuilder 把段落样式的端点挪到下一个换行之后
         // （在引用行末回车、再在空的“> ”上回车），在标题、粗体中间回车时字符样式也跟着跨到下一行。
-        // styleLine 只清理落在本行内的样式，拉长的会留下来：引用竖线叠成好几条、延伸到下面的段落，
-        // 回车后的下一行仍显示成标题。所以把与范围相交的样式覆盖的行全部清掉重排。
+        // styleLine 只处理落在本行内的样式，拉长的会留下来：引用竖线叠成好几条、延伸到下面的段落，
+        // 回车后的下一行仍显示成标题。所以把拉长的样式删掉，它覆盖的行全部重排。
         while (true) {
             val stretched = text.getSpans(lineStart, stop, MdSpan::class.java).filter { span ->
                 text.getSpanEnd(span) > lineStart && text.getSpanStart(span) < stop &&
@@ -142,7 +150,8 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
             }
         }
         for (span in text.getSpans(lineStart, stop, MdSpan::class.java)) {
-            if (text.getSpanEnd(span) > lineStart && text.getSpanStart(span) < stop) text.removeSpan(span)
+            // 跨了行：中间夹着换行（段落样式本来就包含行尾的那个换行）
+            if (text.indexOf('\n', text.getSpanStart(span)) in 0 until text.getSpanEnd(span) - 1) text.removeSpan(span)
         }
         while (true) {
             val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
@@ -154,20 +163,43 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
 
     fun restyleAll(text: Editable) = restyle(text, 0, text.length)
 
+    /** 本行应有的样式。 */
+    private class Want(val span: MdSpan, val start: Int, val end: Int, val flags: Int)
+
+    /**
+     * 把一行的样式改成应有的样子。已有的样式类型、参数、位置都对的就留着，只删多余的、只加缺的：
+     * 每删、加一个影响排版的样式（标题、粗体、全角引号），DynamicLayout 都要把这一段重排一遍。
+     * 在一段满是中文引号的长段落里打一个字，如果全部删掉重加，就要重排几十遍（长文档里每个字 1 秒以上）。
+     */
     private fun styleLine(text: Editable, start: Int, end: Int) {
         // 段落样式要覆盖到行尾的换行符
         val paraEnd = if (end < text.length) end + 1 else end
-        for (span in text.getSpans(start, paraEnd, MdSpan::class.java)) {
+        val old = text.getSpans(start, paraEnd, MdSpan::class.java).filterTo(mutableListOf()) { span ->
             val s = text.getSpanStart(span)
             val e = text.getSpanEnd(span)
-            // getSpans 会带上只是“碰到”边界的相邻行的样式，只清理落在本行内的
-            if (s >= start && e <= paraEnd && !(s == e && s == paraEnd && paraEnd != end)) text.removeSpan(span)
+            // getSpans 会带上只是“碰到”边界的相邻行的样式，只管落在本行内的
+            s >= start && e <= paraEnd && !(s == e && s == paraEnd && paraEnd != end)
         }
-        if (end <= start) return
+        val want = wanted(text, start, end, paraEnd)
+        for (w in want) {
+            val same = old.indexOfFirst { o ->
+                o.key == w.span.key && text.getSpanStart(o) == w.start && text.getSpanEnd(o) == w.end &&
+                    text.getSpanFlags(o) and Spanned.SPAN_POINT_MARK_MASK == w.flags
+            }
+            if (same >= 0) old.removeAt(same) else text.setSpan(w.span, w.start, w.end, w.flags)
+        }
+        for (o in old) text.removeSpan(o)
+    }
+
+    private fun wanted(text: Editable, start: Int, end: Int, paraEnd: Int): List<Want> {
+        val out = mutableListOf<Want>()
+        fun char(span: MdSpan, s: Int, e: Int) { if (e > s) out += Want(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
+        fun para(span: MdSpan, s: Int, e: Int) { if (e > s) out += Want(span, s, e, Spanned.SPAN_PARAGRAPH) }
+        if (end <= start) return out
         val line = text.subSequence(start, end).toString()
         val styles = Markdown.parseLine(line)
         if (indent && line.isNotBlank() && styles.none { it.kind in BLOCK_KINDS }) {
-            para(text, IndentSpan(measure("中中").toInt()), start, paraEnd)
+            para(IndentSpan(measure("中中").toInt()), start, paraEnd)
         }
         for (i in line.indices) {
             val c = line[i]
@@ -175,7 +207,7 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
                 val before = line.getOrNull(i - 1)
                 val after = line.getOrNull(i + 1)
                 if ((before != null && TextStats.isCjk(before)) || (after != null && TextStats.isCjk(after))) {
-                    char(text, FullWidthQuoteSpan(), start + i, start + i + 1)
+                    char(FullWidthQuoteSpan(), start + i, start + i + 1)
                 }
             }
         }
@@ -183,25 +215,18 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
             val s = start + st.start
             val e = start + st.end
             when (st.kind) {
-                Markdown.Kind.MARKER -> char(text, MarkerSpan(), s, e)
-                Markdown.Kind.HEADING1 -> char(text, HeadingSpan(1.35f), s, e)
-                Markdown.Kind.HEADING2 -> char(text, HeadingSpan(1.2f), s, e)
-                Markdown.Kind.HEADING3 -> char(text, HeadingSpan(1.08f), s, e)
-                Markdown.Kind.BOLD -> char(text, BoldSpan(), s, e)
-                Markdown.Kind.ITALIC -> char(text, ItalicSpan(), s, e)
-                Markdown.Kind.QUOTE -> para(text, QuoteBarSpan((14 * dp).toInt(), (3 * dp).toInt()), start, paraEnd)
-                Markdown.Kind.LIST_ITEM -> para(text, HangingIndentSpan(measure(line.substring(0, st.end)).toInt()), start, paraEnd)
-                Markdown.Kind.RULE -> para(text, RuleSpan(1f * dp), start, paraEnd)
+                Markdown.Kind.MARKER -> char(MarkerSpan(), s, e)
+                Markdown.Kind.HEADING1 -> char(HeadingSpan(1.35f), s, e)
+                Markdown.Kind.HEADING2 -> char(HeadingSpan(1.2f), s, e)
+                Markdown.Kind.HEADING3 -> char(HeadingSpan(1.08f), s, e)
+                Markdown.Kind.BOLD -> char(BoldSpan(), s, e)
+                Markdown.Kind.ITALIC -> char(ItalicSpan(), s, e)
+                Markdown.Kind.QUOTE -> para(QuoteBarSpan((14 * dp).toInt(), (3 * dp).toInt()), start, paraEnd)
+                Markdown.Kind.LIST_ITEM -> para(HangingIndentSpan(measure(line.substring(0, st.end)).toInt()), start, paraEnd)
+                Markdown.Kind.RULE -> para(RuleSpan(1f * dp), start, paraEnd)
             }
         }
-    }
-
-    private fun char(text: Editable, span: Any, s: Int, e: Int) {
-        if (e > s) text.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-    }
-
-    private fun para(text: Editable, span: Any, s: Int, e: Int) {
-        if (e > s) text.setSpan(span, s, e, Spanned.SPAN_PARAGRAPH)
+        return out
     }
 
     private companion object {
