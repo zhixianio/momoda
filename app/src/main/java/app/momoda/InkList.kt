@@ -311,10 +311,15 @@ object InkList {
         }
 
         private val consumed = mutableSetOf<Int>()
+        private val pressed = KeyPairs()
 
         override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
-            if (event.action == KeyEvent.ACTION_UP) return consumed.remove(keyCode)
+            if (event.action == KeyEvent.ACTION_UP) {
+                val stray = !pressed.up(keyCode)
+                return consumed.remove(keyCode) || stray
+            }
             if (event.action != KeyEvent.ACTION_DOWN) return false
+            pressed.down(keyCode)
             val handled = navigate(keyCode, event) || when {
                 keyCode == KeyEvent.KEYCODE_DEL -> {
                     val t = text
@@ -332,4 +337,18 @@ object InkList {
             return handled
         }
     }
+}
+
+/**
+ * 记录一个输入框里按下过、还没抬起的键。弹窗常常是在别处按下某个键时打开的（命令面板里按 Enter 选“打开文档”），
+ * 在 Android 10 及更早的系统上，这个键的抬起会送到新弹窗：单行输入框收到 Enter 抬起会把焦点移到下面的列表，
+ * 之后打的字、方向键和 Enter 都没有反应。没在这里按下过的键，抬起应当吞掉。
+ */
+class KeyPairs {
+    private val down = mutableSetOf<Int>()
+
+    fun down(keyCode: Int) { down += keyCode }
+
+    /** 返回这次抬起是否和本输入框里的一次按下配对；false 表示是别处按下的键，应当吞掉。 */
+    fun up(keyCode: Int): Boolean = down.remove(keyCode)
 }
