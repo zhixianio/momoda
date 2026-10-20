@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
@@ -450,22 +451,36 @@ class MainActivity : Activity() {
     }
 
     private fun requestStorageAccess() {
-        if (Build.VERSION.SDK_INT >= 30) {
-            val intents = listOf(
+        val rationale = Build.VERSION.SDK_INT < 30 && shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        val intents = when (DocStore.accessRequest(Build.VERSION.SDK_INT, store.accessDeniedForever, rationale)) {
+            DocStore.AccessRequest.PERMISSION_DIALOG -> {
+                requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 1)
+                return
+            }
+            DocStore.AccessRequest.ALL_FILES_SETTINGS -> listOf(
                 Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")),
                 Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
             )
-            for (intent in intents) {
-                try { startActivity(intent); return } catch (e: Exception) { Log.w("momoda", "无法打开 $intent", e) }
+            DocStore.AccessRequest.APP_SETTINGS -> {
+                toast("请在“权限”里打开“存储”")
+                listOf(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
-            toast("这台设备打不开授权页面")
-        } else {
-            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 1)
         }
+        for (intent in intents) {
+            try { startActivity(intent); return } catch (e: Exception) { Log.w("momoda", "无法打开 $intent", e) }
+        }
+        toast("这台设备打不开授权页面")
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // 拒绝且系统不再给解释机会：用户勾了“不再询问”，下次点“授权”要去应用信息页
+        // （已经勾过时系统不弹窗、直接返回拒绝，所以这里也要提示，否则点了“授权”毫无反应）
+        if (grantResults.isNotEmpty()) {
+            store.accessDeniedForever = grantResults[0] != PackageManager.PERMISSION_GRANTED &&
+                !shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            if (store.accessDeniedForever) toast("存储权限已被拒绝；再次选择“授权”会打开应用信息页")
+        }
         if (store.refreshLocation()) loadDoc(store.openLastOrCreate())
     }
 

@@ -175,6 +175,11 @@ class DocStore(private val context: Context) {
         get() = prefs.getBoolean("askedAccess", false)
         set(v) = prefs.edit().putBoolean("askedAccess", v).apply()
 
+    /** Android 10 及更早：用户拒绝存储权限时勾了“不再询问”。 */
+    var accessDeniedForever: Boolean
+        get() = prefs.getBoolean("accessDeniedForever", false)
+        set(v) = prefs.edit().putBoolean("accessDeniedForever", v).apply()
+
     private fun resolveDir(): File {
         if (hasPublicAccess(context)) {
             val pub = publicDir()
@@ -212,7 +217,21 @@ class DocStore(private val context: Context) {
 
     private fun today() = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
 
+    /** 授权存储时该打开哪里。 */
+    enum class AccessRequest { ALL_FILES_SETTINGS, PERMISSION_DIALOG, APP_SETTINGS }
+
     companion object {
+        /**
+         * Android 11 起去“所有文件访问”设置页；更早的系统弹权限对话框。
+         * 但用户拒绝时勾过“不再询问”（[deniedForever]）且系统不再给解释机会（![rationale]）时，
+         * 系统不会再弹窗，requestPermissions 直接返回拒绝，点“授权”毫无反应：只能去应用信息页里打开。
+         */
+        fun accessRequest(sdk: Int, deniedForever: Boolean, rationale: Boolean): AccessRequest = when {
+            sdk >= 30 -> AccessRequest.ALL_FILES_SETTINGS
+            deniedForever && !rationale -> AccessRequest.APP_SETTINGS
+            else -> AccessRequest.PERMISSION_DIALOG
+        }
+
         /**
          * 把内容为 [text] 的 [src] 搬进 [to]：复制、fsync、读回校验后才删原文件，返回新文件；校验失败返回 null，原文件不动。
          * 目标里已有同名文件时改名另存，不覆盖；但内容完全相同时直接删原文件——
