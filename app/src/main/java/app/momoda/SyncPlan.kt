@@ -52,6 +52,21 @@ object SyncPlan {
         return out
     }
 
+    /**
+     * 同步之后的 base：本地（按执行结果推算的 [agreed]）和远端一致的文件记为一致的内容；
+     * 不一致的（同步期间本地又改了、下载被跳过）沿用原来的 base，下次照常三方比较，不会被当成第一次同步。
+     */
+    fun nextBase(agreed: Map<String, String>, remote: Map<String, String>, base: Map<String, String>): Map<String, String> {
+        val out = HashMap<String, String>()
+        for (path in agreed.keys + remote.keys + base.keys) {
+            val l = agreed[path]
+            val r = remote[path]
+            if (l != null && l == r) out[path] = l
+            else if (l != r) base[path]?.let { out[path] = it }
+        }
+        return out
+    }
+
     fun conflictName(path: String, stamp: String): String {
         val dot = path.lastIndexOf('.')
         return if (dot > path.lastIndexOf('/')) "${path.substring(0, dot)}.remote-$stamp${path.substring(dot)}"

@@ -77,6 +77,8 @@ class GitHubSync(
     private val moveToTrash: (File) -> Unit,
     private val client: Api = HttpApi(target),
     private val device: () -> String = { "${Build.MANUFACTURER} ${Build.MODEL}" },
+    /** 和编辑器保存共用的锁：检查本地文件没变和写入之间，不能插进一次保存。 */
+    private val lock: Any = Any(),
 ) {
     /** 同步的目标。token 不出现在 toString 里，以免被写进日志。 */
     class Target(val apiBase: String, val repo: String, val branch: String, val subdir: String, val token: String) {
@@ -153,16 +155,26 @@ class GitHubSync(
         val treeEntries = JSONArray()
         var uploaded = 0; var downloaded = 0; var deleted = 0; var trashed = 0
         val conflicts = mutableListOf<String>()
+        // 执行之后本地应有的内容。下载和移进回收站之前都核对文件还是扫描时的样子：
+        // 同步要联网好几秒，这期间编辑器可能刚保存过，不能把刚打的字覆盖掉或移走（留给下次同步按冲突处理）。
+        val agreed = HashMap(local)
         for (a in actions) {
             when (a) {
-                is SyncPlan.Action.Download -> { writeLocal(a.path, blob(repoPath, remote.getValue(a.path))); downloaded++ }
-                is SyncPlan.Action.TrashLocal -> { moveToTrash(File(dir, a.path)); trashed++ }
-                is SyncPlan.Action.Conflict -> {
-                    writeLocal(a.copyPath, blob(repoPath, remote.getValue(a.path)))
-                    conflicts += a.copyPath
-                    treeEntries.put(uploadEntry(repoPath, a.path)); uploaded++
+                is SyncPlan.Action.Download -> {
+                    val bytes = blob(repoPath, remote.getValue(a.path))
+                    if (ifUnchanged(a.path, local[a.path]) { writeLocal(a.path, bytes) }) { agreed[a.path] = remote.getValue(a.path); downloaded++ }
                 }
-                is SyncPlan.Action.Upload -> { treeEntries.put(uploadEntry(repoPath, a.path)); uploaded++ }
+                is SyncPlan.Action.TrashLocal -> {
+                    if (ifUnchanged(a.path, local[a.path]) { moveToTrash(File(dir, a.path)) }) { agreed.remove(a.path); trashed++ }
+                }
+                is SyncPlan.Action.Conflict -> {
+                    val bytes = blob(repoPath, remote.getValue(a.path))
+                    if (!ifUnchanged(a.copyPath, local[a.copyPath]) { writeLocal(a.copyPath, bytes) }) error("${a.copyPath} 刚被改过，稍后再同步")
+                    agreed[a.copyPath] = remote.getValue(a.path)
+                    conflicts += a.copyPath
+                    treeEntries.put(uploadEntry(repoPath, a.path).also { agreed[a.path] = it.getString("sha") }); uploaded++
+                }
+                is SyncPlan.Action.Upload -> { treeEntries.put(uploadEntry(repoPath, a.path).also { agreed[a.path] = it.getString("sha") }); uploaded++ }
                 is SyncPlan.Action.DeleteRemote -> {
                     treeEntries.put(JSONObject().put("path", prefix + a.path).put("mode", "100644").put("type", "blob").put("sha", JSONObject.NULL))
                     deleted++
@@ -190,10 +202,9 @@ class GitHubSync(
             }
         }
 
-        // 5. 记录新的“共同状态”：两边内容一致的文件
-        val localAfter = scanLocal()
+        // 5. 记录新的“共同状态”。不重新扫描本地：同步期间又改过的文件，base 应当是这次推送的版本
         val newBase = JSONObject()
-        for ((p, sha) in localAfter) if (remoteAfter[p] == sha) newBase.put(p, sha)
+        for ((p, sha) in SyncPlan.nextBase(agreed, remoteAfter, base)) newBase.put(p, sha)
         stateFile.writeText(JSONObject().put("key", stateKey()).put("base", newBase).put("time", System.currentTimeMillis()).toString())
 
         return Result(uploaded, downloaded, deleted, trashed, conflicts)
@@ -233,6 +244,15 @@ class GitHubSync(
                 if (inScope(path)) out[path] = SyncPlan.blobSha(f.readBytes())
             }
         return out
+    }
+
+    /** 本地文件的内容仍是 [expected]（null 表示不存在）时才执行 [action]，返回是否执行了。 */
+    private fun ifUnchanged(path: String, expected: String?, action: () -> Unit): Boolean = synchronized(lock) {
+        val f = File(dir, path)
+        val now = if (f.isFile) SyncPlan.blobSha(f.readBytes()) else null
+        if (now != expected) return false
+        action()
+        true
     }
 
     private fun writeLocal(path: String, bytes: ByteArray) {

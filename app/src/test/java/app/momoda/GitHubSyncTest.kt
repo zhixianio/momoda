@@ -63,5 +63,52 @@ class GitHubSyncTest {
         assertEquals(mapOf("a.md" to "a"), gh.files())
     }
 
+    @Test fun downloadDoesNotOverwriteTextSavedDuringSync() {
+        write("a.md", "v1")
+        sync()
+        gh.push(mapOf("a.md" to "别的设备改的"))
+        // 同步已经扫描过本地、正在下载远端版本时，编辑器自动保存了刚打的字
+        gh.beforeBlobGet = { write("a.md", "v1 刚打的字") }
+        sync()
+        gh.beforeBlobGet = null
+        assertEquals("v1 刚打的字", read("a.md"))
+
+        // 下一次同步按“两边都改了”处理：推送本地版本，远端版本另存
+        val r = sync()
+        assertEquals("v1 刚打的字", read("a.md"))
+        assertEquals("v1 刚打的字", gh.files()["a.md"])
+        assertEquals("别的设备改的", read(r.conflicts.single()))
+    }
+
+    @Test fun trashDoesNotTakeTextSavedDuringSync() {
+        write("0.md", "0")
+        write("a.md", "v1")
+        sync()
+        gh.push(mapOf("0.md" to "0 新", "a.md" to null))
+        gh.beforeBlobGet = { write("a.md", "v1 刚打的字") }
+        sync()
+        gh.beforeBlobGet = null
+        assertEquals("v1 刚打的字", read("a.md"))
+        assertTrue(trash.list()!!.isEmpty())
+        // 远端删了、本地又改过：推回去
+        sync()
+        assertEquals("v1 刚打的字", gh.files()["a.md"])
+    }
+
+    @Test fun editDuringSyncIsNotTreatedAsFirstSyncConflict() {
+        write("a.md", "v1")
+        write("b.md", "b")
+        sync()
+        write("a.md", "v2")
+        gh.push(mapOf("b.md" to "b 新"))
+        // a.md 已经上传了 v2，下载 b.md 的时候用户又改了 a.md
+        gh.beforeBlobGet = { write("a.md", "v3") }
+        sync()
+        gh.beforeBlobGet = null
+        val r = sync()
+        assertEquals(emptyList<String>(), r.conflicts)
+        assertEquals("v3", gh.files()["a.md"])
+    }
+
     @Test fun targetToStringHidesToken() = assertFalse(target().toString().contains("secret-token"))
 }

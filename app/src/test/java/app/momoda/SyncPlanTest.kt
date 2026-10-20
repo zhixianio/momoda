@@ -47,6 +47,14 @@ class SyncPlanTest {
 
     @Test fun bothDeletedIsNoop() = assertEquals(emptyList<Any>(), plan(emptyMap(), emptyMap(), mapOf("a.md" to "1")))
 
+    @Test fun nextBaseKeepsOldBaseWhenSidesDiffer() = assertEquals(
+        mapOf("same.md" to "2", "skipped.md" to "1"),
+        SyncPlan.nextBase(
+            agreed = mapOf("same.md" to "2", "skipped.md" to "9", "copy.md" to "5"),
+            remote = mapOf("same.md" to "2", "skipped.md" to "3"),
+            base = mapOf("same.md" to "1", "skipped.md" to "1", "gone.md" to "1"),
+        ))
+
     @Test fun conflictNameInSubfolder() = assertEquals("_agent/x.remote-1020-0815.md", SyncPlan.conflictName("_agent/x.md", "1020-0815"))
 
     @Test fun blobShaMatchesGit() {

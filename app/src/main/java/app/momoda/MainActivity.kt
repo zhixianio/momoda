@@ -307,14 +307,20 @@ class MainActivity : Activity() {
         if (dirty) {
             val text = editor.text.toString()
             try {
-                if (store.changedOnDisk(doc)) {
-                    // 文档被别的程序改过（例如通过 USB 拷进了新版本）：不覆盖对方，把我们的版本另存一份
-                    val copy = store.saveConflictCopy(doc, text)
+                // 后台同步写本地文件时也拿这把锁：检查和写入之间不会被同步插进来
+                val copy = synchronized(store) {
+                    if (store.changedOnDisk(doc)) {
+                        // 文档被别的程序改过（例如通过 USB 拷进了新版本）：不覆盖对方，把我们的版本另存一份
+                        store.saveConflictCopy(doc, text)
+                    } else {
+                        store.write(doc, text)
+                        null
+                    }
+                }
+                if (copy != null) {
                     toast("《${doc.nameWithoutExtension}》被其他程序修改过，你的版本另存为《${copy.nameWithoutExtension}》")
                     doc = copy
                     store.lastDocName = copy.name
-                } else {
-                    store.write(doc, text)
                 }
                 dirty = false
                 if (saveError != null) { saveError = null; refreshChrome() }
@@ -801,7 +807,7 @@ class MainActivity : Activity() {
 
     // ---------- GitHub 同步（DESIGN §5） ----------
 
-    private fun makeSync() = GitHubSync(sync.target(), store.dir, File(filesDir, "sync-state.json"), moveToTrash = { f -> store.moveToTrash(f) })
+    private fun makeSync() = GitHubSync(sync.target(), store.dir, File(filesDir, "sync-state.json"), moveToTrash = { f -> store.moveToTrash(f) }, lock = store)
 
     private fun showSyncConfig() {
         save()
