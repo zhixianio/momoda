@@ -3,6 +3,7 @@ package app.momoda
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.text.Editable
 import android.text.Layout
 import android.text.Spanned
@@ -93,17 +94,24 @@ class IndentSpan(private val width: Int) : LeadingMarginSpan, MdSpan {
     ) = Unit
 }
 
-/** 分隔线：在这一行中间画一条横线，`---` 本身淡显。 */
-class RuleSpan(private val thickness: Float) : LineBackgroundSpan, MdSpan {
+/**
+ * 分隔线：画一条和 `-` 字形同一高度、同样粗细、同样灰度的横线，让 `---` 融进线里，
+ * 看上去只有一条线；标记本身仍在，光标移上去照样可以编辑。
+ * （按文字的大致中线画时，霞鹜文楷的 `-` 偏下，会在线的下方露出三个短横。）
+ */
+class RuleSpan(private val minThickness: Float) : LineBackgroundSpan, MdSpan {
+    private val dash = Rect()
+
     override fun drawBackground(
         c: Canvas, p: Paint, left: Int, right: Int, top: Int, baseline: Int, bottom: Int,
         text: CharSequence, start: Int, end: Int, lineNumber: Int,
     ) {
         val color = p.color
-        p.color = RULE_GRAY
-        // 行高里含 1.75 倍行距的空白，按行框中线画会偏下；改为对齐文字本身的中线
-        val y = baseline - p.textSize * 0.35f
-        c.drawRect(left.toFloat(), y - thickness / 2, right.toFloat(), y + thickness / 2, p)
+        p.color = MARKER_GRAY
+        p.getTextBounds("-", 0, 1, dash)
+        val y = baseline + dash.exactCenterY()
+        val half = maxOf(minThickness, dash.height().toFloat()) / 2
+        c.drawRect(left.toFloat(), y - half, right.toFloat(), y + half, p)
         p.color = color
     }
 }
@@ -165,7 +173,7 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
                 Markdown.Kind.ITALIC -> char(text, ItalicSpan(), s, e)
                 Markdown.Kind.QUOTE -> para(text, QuoteBarSpan((14 * dp).toInt(), (3 * dp).toInt()), start, paraEnd)
                 Markdown.Kind.LIST_ITEM -> para(text, HangingIndentSpan(measure(line.substring(0, st.end)).toInt()), start, paraEnd)
-                Markdown.Kind.RULE -> para(text, RuleSpan(1.5f * dp), start, paraEnd)
+                Markdown.Kind.RULE -> para(text, RuleSpan(1f * dp), start, paraEnd)
             }
         }
     }
