@@ -93,4 +93,17 @@ class SyncPlanTest {
 
     @Test fun bothSpellingsLocalIsNotAClash() =
         assertEquals(emptySet<String>(), SyncPlan.caseClashes(mapOf("A.md" to "1", "a.md" to "2"), mapOf("A.md" to "1", "a.md" to "2"), emptyMap()))
+
+    @Test fun retryInLaterMinuteReusesExistingCopy() {
+        // 10:15 冲突，副本已经存到本地，推送失败；10:16 重试
+        val local = mapOf("a.md" to "2", "a.remote-1020-0815.md" to "3", "b.remote-1019-0900.md" to "3")
+        val actions = SyncPlan.plan(local, mapOf("a.md" to "3"), mapOf("a.md" to "1"), "1020-0816")
+        assertEquals(Conflict("a.md", "a.remote-1020-0815.md"), actions.first { it.path == "a.md" })
+    }
+
+    @Test fun olderCopyWithOtherContentIsNotReused() {
+        val local = mapOf("a.md" to "2", "a.remote-1019-0900.md" to "9")
+        val actions = SyncPlan.plan(local, mapOf("a.md" to "3"), mapOf("a.md" to "1"), "1020-0816")
+        assertEquals(Conflict("a.md", "a.remote-1020-0816.md"), actions.first { it.path == "a.md" })
+    }
 }

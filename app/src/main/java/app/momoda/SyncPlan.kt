@@ -92,6 +92,11 @@ object SyncPlan {
      * 已有的文件内容正好就是这份远端版本（上次推送失败后重试）时沿用它，不再多存一份。
      */
     private fun copyName(path: String, stamp: String, sha: String, local: Map<String, String>, remote: Map<String, String>): String {
+        // 上次推送失败、跨了一分钟才重试：本地已经有这份远端版本的副本（时间不同），沿用它
+        val sample = conflictName(path, "\u0000")
+        val pattern = Regex(Regex.escape(sample.substringBefore('\u0000')) + "\\d{4}-\\d{4}(-\\d+)?" + Regex.escape(sample.substringAfter('\u0000')))
+        local.entries.filter { it.value == sha && pattern.matches(it.key) && remote[it.key].let { r -> r == null || r == sha } }
+            .minOfOrNull { it.key }?.let { return it }
         var n = 1
         while (true) {
             val name = conflictName(path, if (n == 1) stamp else "$stamp-$n")

@@ -118,19 +118,17 @@ class GitHubSyncTest {
         gh.push(mapOf("a.md" to "远端 v2", "b.md" to null, "c.md" to "c"))
         gh.failNextPatch = java.io.IOException("网络断了")
         assertTrue(runCatching { sync() }.isFailure)
-        // 下载、移进回收站、冲突副本已经落地，推送没成功；再同步一次
+        // 下载、移进回收站、冲突副本已经落地，推送没成功；过了一分钟再同步
+        docs.listFiles()!!.single { it.name.contains(".remote-") }.renameTo(File(docs, "a.remote-0101-0000.md"))
         sync()
         assertEquals("本地 v2", gh.files()["a.md"])
         assertEquals("本地 v2", read("a.md"))
         assertEquals("c", read("c.md"))
         assertFalse(gh.files().containsKey("b.md"))
-        // 远端版本另存了（同一分钟内重试沿用同一份副本；跨了分钟会多一份内容相同的副本）
-        val copies = docs.list()!!.filter { it.contains(".remote-") }
-        assertTrue(copies.isNotEmpty())
-        for (c in copies) {
-            assertEquals("远端 v2", read(c))
-            assertEquals("远端 v2", gh.files()[c])
-        }
+        // 远端版本另存了一份（重试时沿用同一份副本，跨了分钟也是）
+        val copy = docs.list()!!.single { it.contains(".remote-") }
+        assertEquals("远端 v2", read(copy))
+        assertEquals("远端 v2", gh.files()[copy])
     }
 
     @Test fun lostRefUpdateResponseIsSafeToRetry() {
