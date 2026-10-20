@@ -54,6 +54,7 @@ a:hover { text-decoration-color: var(--ink); }
 .brand { display: inline-flex; align-items: center; gap: .5em; color: var(--ink); }
 .mark { width: 1.6em; height: auto; fill: currentColor; }
 footer.running { margin-top: 120px; padding-bottom: 32px; flex-wrap: wrap; }
+.running .sep { margin: 0 .6em; color: #bbb; }
 
 main { padding: 0 16px; }
 main > section { max-width: var(--measure); margin-left: auto; margin-right: auto; }
