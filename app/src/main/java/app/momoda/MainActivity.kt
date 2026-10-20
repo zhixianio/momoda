@@ -93,8 +93,6 @@ class MainActivity : Activity() {
 
     /** Ctrl 组合键按下时被消费的键码，抬起时也要一并消费。 */
     private val consumedDowns = mutableSetOf<Int>()
-    /** “CapsLock 当 Ctrl”打开时，CapsLock 正被按住。 */
-    private var capsHeld = false
     /** 实体键盘的大写锁定是否打开（从最近一次按键的状态得知）。 */
     private var capsLockOn = false
 
@@ -281,7 +279,6 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        capsHeld = false
         handler.removeCallbacks(clockRunnable)
         save()
         // 离开 App 也算“离开文档”：文件名跟上标题
@@ -527,25 +524,9 @@ class MainActivity : Activity() {
             toast(if (capsLockOn) "大写锁定已打开" else "大写锁定已关闭")
         }
 
-        // CapsLock 当 Ctrl：按住期间记下来，自己的按下和抬起都不交给输入法
-        if (keyCode == KeyEvent.KEYCODE_CAPS_LOCK && settings.capsAsCtrl) {
-            capsHeld = event.action == KeyEvent.ACTION_DOWN
-            KeyLog.add(event, "CapsLock 当 Ctrl")
-            refreshDebug()
-            return true
-        }
-
         // Ctrl/Cmd + 字母数字符号：在输入法之前处理，避免被输入法吞掉。
         // Ctrl + 方向键、Home/End、退格等编辑键不拦截，走系统默认行为（按词跳转、跳到文首文末等）。
-        val ctrl = event.isCtrlPressed || event.isMetaPressed || capsHeld
-        if (capsHeld && !isShortcutKey(keyCode)) {
-            // CapsLock + 方向键、退格等：系统不知道 CapsLock 按着，把它改成 Ctrl 再交给编辑器
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                editor.onKeyDown(keyCode, asCtrl(event))
-                consumedDowns += keyCode
-            }
-            return true
-        }
+        val ctrl = event.isCtrlPressed || event.isMetaPressed
         if (ctrl && isShortcutKey(keyCode)) {
             if (event.action == KeyEvent.ACTION_DOWN) {
                 val name = runShortcut(keyCode, event)
@@ -619,8 +600,8 @@ class MainActivity : Activity() {
             keyCode == KeyEvent.KEYCODE_PLUS || keyCode == KeyEvent.KEYCODE_SLASH
 
     private fun asCtrl(e: KeyEvent): KeyEvent {
-        if (!e.isMetaPressed && !capsHeld) return e
-        val meta = (e.metaState and (KeyEvent.META_META_MASK or KeyEvent.META_CAPS_LOCK_ON).inv()) or
+        if (!e.isMetaPressed) return e
+        val meta = (e.metaState and KeyEvent.META_META_MASK.inv()) or
             KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
         return KeyEvent(e.downTime, e.eventTime, e.action, e.keyCode, e.repeatCount, meta)
     }
@@ -662,17 +643,11 @@ class MainActivity : Activity() {
         updates.latest?.let { r -> add(Command("install-update", "安装新版本 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
         add(Command("check-update", "检查更新", if (updates.configured) "" else "尚未配置发布地址") { checkForUpdates(force = true) })
         add(Command("diagnostics", "导出诊断信息", "崩溃记录等，不含文档内容", ::exportDiagnostics))
-        add(Command("debug", "调试面板", "Ctrl+Shift+D", ::toggleDebug))
-        add(Command("about", "系统设置 · 关于本机", "连点版本号开启开发者选项") {
-            openSystemSettings(Settings.ACTION_DEVICE_INFO_SETTINGS, "Settings\$MyDeviceInfoActivity")
-        })
-        // 系统层面把 CapsLock 改成 Ctrl 最干净（按它不会切换大写锁定）：在这里给键盘选用墨墨打提供的布局
-        // “墨墨打：CapsLock 当 Ctrl”（res/raw/keyboard_layout_caps_ctrl.kcm），较新的 Android 还有“修饰键”
-        add(Command("hardkeyboard", "系统设置 · 实体键盘", "选用布局“墨墨打：CapsLock 当 Ctrl”") {
+        // 调试面板（按键记录、刷新耗时）不放进命令面板，排查问题时用 Ctrl+Shift+D 打开
+        // 把 CapsLock 改成 Ctrl：在这里给键盘选用墨墨打提供的布局（res/xml/keyboard_layouts.xml）。
+        // App 自己拦 CapsLock 拦不住大写锁定（系统先切换了才交给 App），所以只走系统布局这一条路
+        add(Command("hardkeyboard", "系统设置 · 实体键盘", "可选用布局“墨墨打：CapsLock 当 Ctrl”") {
             openSystemSettings(Settings.ACTION_HARD_KEYBOARD_SETTINGS, "Settings\$PhysicalKeyboardActivity")
-        })
-        add(Command("devopts", "系统设置 · 开发者选项") {
-            openSystemSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, "Settings\$DevelopmentSettingsDashboardActivity")
         })
     }
 
@@ -718,8 +693,6 @@ class MainActivity : Activity() {
      * 否则有的输入法（汉王）会继续往已经关掉的弹窗里上屏，表现为“光标消失、字不知去向”。
      */
     private fun returnToEditor() {
-        // CapsLock 可能是在弹窗里抬起的，编辑器收不到：回到编辑器时一律当作已松开
-        capsHeld = false
         editor.requestFocus()
         getSystemService(InputMethodManager::class.java).restartInput(editor)
     }
@@ -806,7 +779,6 @@ class MainActivity : Activity() {
             SettingsPanel.Row("页眉页脚", { onOff(settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true),
             SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true),
             SettingsPanel.Row("Vim 模式", { onOff(settings.vim) }, { settings.vim = !settings.vim; applySettings() }, isToggle = true),
-            SettingsPanel.Row("CapsLock 当 Ctrl", { onOff(settings.capsAsCtrl) }, { settings.capsAsCtrl = !settings.capsAsCtrl; capsHeld = false }, isToggle = true),
             SettingsPanel.Row("自动检查更新", { onOff(settings.autoUpdate) }, { settings.autoUpdate = !settings.autoUpdate }, isToggle = true),
         )
         val version = packageManager.getPackageInfo(packageName, 0).versionName
