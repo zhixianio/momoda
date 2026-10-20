@@ -544,6 +544,7 @@ class MainActivity : Activity() {
         add(Command("github-login", "用 GitHub 登录（同步）", "手机或电脑上输入验证码，不用打 token", ::loginGitHub))
         add(Command("sync-settings", "GitHub 同步设置", if (sync.configured) sync.repo else "未配置", ::showSyncConfig))
         add(Command("ai", "AI 助手", "Ctrl+J", ::showAi))
+        add(Command("paste", "从手机或电脑粘贴", "AI 设置、GitHub token、正文片段", ::showPaste))
         add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "未配置", ::showAiConfig))
         add(Command("ai-prompts", "编辑 AI 指令", Prompts.FILE_NAME, ::editPrompts))
         add(Command("zen", "Zen 模式", "Ctrl+.", ::toggleZen))
@@ -772,6 +773,29 @@ class MainActivity : Activity() {
                 ).show()
             }
         }
+    }
+
+    // ---------- 从手机或电脑粘贴 ----------
+
+    private fun showPaste() {
+        save()
+        PastePanel(this, font, onReceived = { f ->
+            val applied = mutableListOf<String>()
+            f["ai_url"]?.let { llm.baseUrl = it; applied += "AI 接口地址" }
+            f["ai_key"]?.let { llm.apiKey = it; applied += "AI 密钥" }
+            f["ai_model"]?.let { llm.model = it; applied += "AI 模型" }
+            f["gh_repo"]?.let { sync.repo = it; applied += "GitHub 仓库" }
+            f["gh_token"]?.let { sync.token = it; applied += "GitHub token" }
+            f["text"]?.let {
+                val text = it.replace("\r\n", "\n")
+                val at = editor.selectionEnd.coerceIn(0, editor.text.length)
+                editor.text.insert(at, text)
+                editor.setSelection((at + text.length).coerceAtMost(editor.text.length))
+                applied += "正文 ${TextStats.format(TextStats.wordCount(text))} 字"
+            }
+            toast("已收到：${applied.joinToString("、")}")
+            returnToEditor()
+        }, onDismiss = ::returnToEditor).show()
     }
 
     // ---------- GitHub 同步（DESIGN §5） ----------
