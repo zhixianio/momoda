@@ -935,10 +935,15 @@ class MainActivity : Activity() {
                 toast("已登录，同步到 $repo（可在“GitHub 同步设置”里换仓库或指定仓库内目录）")
                 syncNow(force = true)
             }
+            // 只有一个仓库也让用户看一眼再确认，并告诉他还可以加别的仓库
             fun choose(list: List<String>) {
-                if (list.size == 1) finish(list.single())
-                else InkList.show(this, "同步到哪个仓库？", list.map { InkItem(it) }, font, searchHint = null, onDismiss = ::returnToEditor) { i ->
-                    finish(list[i])
+                val items = list.map { InkItem(it) } + InkItem("让墨墨打访问其他仓库…", "在手机或电脑上添加")
+                InkList.show(this, "同步到哪个仓库？", items, font, searchHint = null, onDismiss = ::returnToEditor) { i ->
+                    if (i < list.size) finish(list[i])
+                    else InstallGuidePanel(this, font, installUrl(),
+                        // 仓库变多了才继续：已经能访问的那几个不算
+                        check = { auth.repositories(token).takeIf { it.size > list.size }.orEmpty() },
+                        onRepos = ::choose, onDismiss = ::returnToEditor, adding = true).show()
                 }
             }
             if (repos.isNotEmpty()) choose(repos)

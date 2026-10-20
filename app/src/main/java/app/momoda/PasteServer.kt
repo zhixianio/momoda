@@ -162,7 +162,7 @@ textarea{height:140px}button{font-size:18px;padding:12px 28px;margin-top:8px;bor
 <label>API key</label><input name="ai_key" type="password" autocomplete="off">
 <label>模型</label><input name="ai_model" placeholder="qwen2.5:14b" autocapitalize="off"></fieldset>
 <fieldset><legend>GitHub 同步</legend>
-<label>仓库（用户名/仓库名）</label><input name="gh_repo" placeholder="zhixianio/momoda-notes" autocapitalize="off">
+<label>仓库（用户名/仓库名）</label><input name="gh_repo" placeholder="用户名/笔记仓库" autocapitalize="off">
 <label>Fine-grained token</label><input name="gh_token" type="password" autocomplete="off"></fieldset>
 <fieldset><legend>粘贴到正文</legend>
 <label>插入到当前文档的光标处</label><textarea name="text"></textarea></fieldset>

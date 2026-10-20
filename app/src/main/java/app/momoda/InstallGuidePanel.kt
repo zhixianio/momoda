@@ -25,6 +25,8 @@ class InstallGuidePanel(
     private val check: () -> List<String>,
     private val onRepos: (List<String>) -> Unit,
     private val onDismiss: () -> Unit,
+    /** true：已经装过，只是要再加几个仓库（说明文字不同）。 */
+    private val adding: Boolean = false,
 ) {
     fun show() {
         val c = context
@@ -38,7 +40,7 @@ class InstallGuidePanel(
         }
         lateinit var dialog: Dialog
         var done = false
-        val status = text(14f, Color.rgb(0x66, 0x66, 0x66)).apply { text = "等待安装…（每 5 秒检查一次）" }
+        val status = text(14f, Color.rgb(0x66, 0x66, 0x66)).apply { text = if (adding) "等待添加…（每 5 秒检查一次）" else "等待安装…（每 5 秒检查一次）" }
         val box = object : LinearLayout(c) {
             override fun dispatchKeyEvent(event: KeyEvent): Boolean {
                 if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_ESCAPE) { dialog.dismiss(); return true }
@@ -50,9 +52,10 @@ class InstallGuidePanel(
             setPadding(c.px(24), c.px(20), c.px(24), c.px(16))
             isFocusable = true
             isFocusableInTouchMode = true
-            addView(text(18f).apply { text = "还差一步：把墨墨打装到你的笔记仓库" })
+            addView(text(18f).apply { text = if (adding) "让墨墨打访问其他仓库" else "还差一步：把墨墨打装到你的笔记仓库" })
             addView(text(15f).apply {
-                text = "已经登录成功。现在在手机或电脑上打开下面的地址，\n选择“Only select repositories”，只勾你的笔记仓库，点 Install。"
+                text = if (adding) "在手机或电脑上打开下面的地址，\n在 Repository access 里勾上要用的仓库，点 Save。"
+                else "已经登录成功。现在在手机或电脑上打开下面的地址，\n选择“Only select repositories”，只勾你的笔记仓库，点 Install。"
                 setPadding(0, c.px(14), 0, c.px(8))
             })
             addView(text(22f).apply { text = installUrl.removePrefix("https://"); setPadding(0, c.px(6), 0, c.px(10)) })
