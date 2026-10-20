@@ -55,6 +55,18 @@ class SyncPlanTest {
             base = mapOf("same.md" to "1", "skipped.md" to "1", "gone.md" to "1"),
         ))
 
+    @Test fun conflictCopyNeverOverwritesExistingFile() = assertEquals(
+        listOf(Conflict("a.md", "a.remote-1020-0815-3.md"), Download("a.remote-1020-0815-2.md")),
+        plan(
+            mapOf("a.md" to "2", "a.remote-1020-0815.md" to "x"),
+            mapOf("a.md" to "3", "a.remote-1020-0815.md" to "x", "a.remote-1020-0815-2.md" to "y"),
+            mapOf("a.md" to "1", "a.remote-1020-0815.md" to "x"),
+        ))
+
+    @Test fun conflictCopyReusedWhenItAlreadyHoldsRemoteVersion() = assertEquals(
+        listOf(Conflict("a.md", "a.remote-1020-0815.md"), Upload("a.remote-1020-0815.md")),
+        plan(mapOf("a.md" to "2", "a.remote-1020-0815.md" to "3"), mapOf("a.md" to "3"), mapOf("a.md" to "1")))
+
     @Test fun conflictNameInSubfolder() = assertEquals("_agent/x.remote-1020-0815.md", SyncPlan.conflictName("_agent/x.md", "1020-0815"))
 
     @Test fun blobShaMatchesGit() {

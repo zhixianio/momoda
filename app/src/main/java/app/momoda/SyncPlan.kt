@@ -39,14 +39,14 @@ object SyncPlan {
                 l == r -> Unit                                       // 一致（包括两边都删了）
                 l != null && r == null && b == null -> out += Action.Upload(path)          // 本地新建
                 l == null && r != null && b == null -> out += Action.Download(path)        // 远端新建
-                l != null && r != null && b == null -> out += Action.Conflict(path, conflictName(path, stamp)) // 两边各自新建了同名文件
+                l != null && r != null && b == null -> out += Action.Conflict(path, copyName(path, stamp, r, local, remote)) // 两边各自新建了同名文件
                 l == b && r == null -> out += Action.TrashLocal(path)                       // 远端删了，本地没改
                 l == b -> out += Action.Download(path)                                     // 只有远端改了
                 r == b && l == null -> out += Action.DeleteRemote(path)                    // 本地删了，远端没改
                 r == b -> out += Action.Upload(path)                                       // 只有本地改了
                 l == null -> out += Action.Download(path)                                  // 本地删了，但远端又改过：拉回来
                 r == null -> out += Action.Upload(path)                                    // 远端删了，但本地又改过：推回去
-                else -> out += Action.Conflict(path, conflictName(path, stamp))            // 两边都改了
+                else -> out += Action.Conflict(path, copyName(path, stamp, r!!, local, remote)) // 两边都改了
             }
         }
         return out
@@ -65,6 +65,19 @@ object SyncPlan {
             else if (l != r) base[path]?.let { out[path] = it }
         }
         return out
+    }
+
+    /**
+     * 冲突副本的文件名，不能覆盖已有的文件：同一分钟里同一篇第二次冲突时，第一次的副本还在。
+     * 已有的文件内容正好就是这份远端版本（上次推送失败后重试）时沿用它，不再多存一份。
+     */
+    private fun copyName(path: String, stamp: String, sha: String, local: Map<String, String>, remote: Map<String, String>): String {
+        var n = 1
+        while (true) {
+            val name = conflictName(path, if (n == 1) stamp else "$stamp-$n")
+            if (local[name].let { it == null || it == sha } && remote[name].let { it == null || it == sha }) return name
+            n++
+        }
     }
 
     fun conflictName(path: String, stamp: String): String {
