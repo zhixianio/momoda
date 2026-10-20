@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  墨墨打的图标：两个墨点是“墨墨”，一道光标是“打”。
+  纯黑图形，同一份矢量也用作 Android 13 的主题图标（monochrome 只看 alpha）。
+  自适应图标画布 108dp，可见区是中间 72dp，安全区是直径 66dp 的圆；图形都在安全区内。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#111111"
+        android:pathData="M32.67,59.33 A7.11,7.11 0 1,0 46.89,59.33 A7.11,7.11 0 1,0 32.67,59.33 Z" />
+    <path
+        android:fillColor="#111111"
+        android:pathData="M50.45,59.33 A7.11,7.11 0 1,0 64.67,59.33 A7.11,7.11 0 1,0 50.45,59.33 Z" />
+    <path
+        android:fillColor="#111111"
+        android:pathData="M70.23,41.33 A2.44,2.44 0 0,1 75.11,41.33 V65.78 A2.44,2.44 0 0,1 70.23,65.78 Z" />
+</vector>
