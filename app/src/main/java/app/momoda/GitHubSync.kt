@@ -39,6 +39,16 @@ class SyncSettings(context: Context) {
         get() = prefs.getString("apiBase", "https://api.github.com")!!
         set(v) = prefs.edit().putString("apiBase", v).apply()
 
+    /** GitHub 网页地址（设备授权用）；debug 包可以指向本地模拟服务。 */
+    var webBase: String
+        get() = prefs.getString("webBase", "https://github.com")!!
+        set(v) = prefs.edit().putString("webBase", v).apply()
+
+    /** GitHub App 的 Client ID：默认来自构建配置，debug 包可以覆盖。 */
+    var clientId: String
+        get() = prefs.getString("clientId", null) ?: BuildConfig.GITHUB_CLIENT_ID
+        set(v) = prefs.edit().putString("clientId", v.trim()).apply()
+
     val configured get() = repo.matches(Regex("[^/\\s]+/[^/\\s]+")) && token.isNotBlank()
 }
 

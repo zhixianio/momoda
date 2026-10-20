@@ -102,6 +102,8 @@ class MainActivity : Activity() {
                 apiBase = it
                 intent.getStringExtra("githubRepo")?.let { r -> repo = r }
                 intent.getStringExtra("githubToken")?.let { t -> token = t }
+                intent.getStringExtra("githubWeb")?.let { w -> webBase = w }
+                intent.getStringExtra("githubClientId")?.let { id -> clientId = id }
             }
         }
         if (BuildConfig.DEBUG) intent.getStringExtra("updateApi")?.let {
@@ -539,6 +541,7 @@ class MainActivity : Activity() {
         add(Command("manage", "管理文档", "回收站、排序、批量查看", ::showManager))
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
         add(Command("sync", "立即同步", if (sync.configured) "${sync.repo} · Ctrl+Shift+S" else "未配置", { syncNow(force = true) }))
+        add(Command("github-login", "用 GitHub 登录（同步）", "手机或电脑上输入验证码，不用打 token", ::loginGitHub))
         add(Command("sync-settings", "GitHub 同步设置", if (sync.configured) sync.repo else "未配置", ::showSyncConfig))
         add(Command("ai", "AI 助手", "Ctrl+J", ::showAi))
         add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "未配置", ::showAiConfig))
@@ -777,7 +780,33 @@ class MainActivity : Activity() {
 
     private fun showSyncConfig() {
         save()
-        SyncConfigPanel(this, font, sync, ::makeSync, onDismiss = ::returnToEditor).show()
+        SyncConfigPanel(this, font, sync, ::makeSync, onLogin = ::loginGitHub, onDismiss = ::returnToEditor).show()
+    }
+
+    /** 设备授权登录：验证码在手机或电脑上输入；成功后自动选仓库并开始第一次同步。 */
+    private fun loginGitHub() {
+        if (sync.clientId.isBlank()) {
+            toast("还没有配置 GitHub App 的 Client ID，见 docs/M3.md；也可以在同步设置里手动填 token")
+            showSyncConfig()
+            return
+        }
+        save()
+        val auth = GitHubAuth(sync.clientId, sync.webBase, sync.apiBase)
+        DeviceLoginPanel(this, font, auth, onSuccess = { token, repos ->
+            sync.token = token
+            fun finish(repo: String) {
+                sync.repo = repo
+                toast("已登录，同步到 $repo")
+                syncNow(force = true)
+            }
+            when {
+                repos.isEmpty() -> toast("授权成功，但没有可访问的仓库：请在 GitHub 上把这个 App 安装到你的笔记仓库")
+                repos.size == 1 -> finish(repos.single())
+                else -> InkList.show(this, "同步到哪个仓库？", repos.map { InkItem(it) }, font, searchHint = null, onDismiss = ::returnToEditor) { i ->
+                    finish(repos[i])
+                }
+            }
+        }, onDismiss = ::returnToEditor).show()
     }
 
     private val syncPrefs by lazy { getSharedPreferences("sync", Context.MODE_PRIVATE) }

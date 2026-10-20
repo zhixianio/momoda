@@ -22,6 +22,7 @@ class SyncConfigPanel(
     private val typeface: Typeface?,
     private val settings: SyncSettings,
     private val makeSync: () -> GitHubSync,
+    private val onLogin: () -> Unit,
     private val onDismiss: () -> Unit,
 ) {
     fun show() {
@@ -100,7 +101,13 @@ class SyncConfigPanel(
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                 this.typeface = typeface
             })
-            addView(label("仓库")); addView(repo)
+            addView(LinearLayout(c).apply {
+                setPadding(0, c.px(12), 0, c.px(4))
+                addView(c.inkButton("用 GitHub 登录（推荐：在手机或电脑上输入验证码，不用打字）", typeface) {
+                    dialog.dismiss(); onLogin()
+                })
+            })
+            addView(label("或者手动填写：仓库")); addView(repo)
             addView(label("分支")); addView(branch)
             addView(label("Fine-grained token")); addView(token)
             addView(autoView)
