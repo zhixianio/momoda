@@ -63,6 +63,12 @@ class EditRulesTest {
 
     @Test fun backspaceOnSoftBreakJustJoins() = assertEquals("甲|乙", backspace("甲\n|乙"))
 
+    @Test fun backspaceRightAfterEnterAtEndUndoesIt() = assertEquals("段落|", backspace("段落\n\n|"))
+
+    @Test fun backspaceRightAfterEnterBeforeNextParagraphUndoesIt() = assertEquals("甲|\n\n乙", backspace("甲\n\n|\n\n乙"))
+
+    @Test fun enterThenBackspaceAtEndIsNoOp() = assertEquals("段落|", backspace(enter("段落|").replace("|", "") + "|"))
+
     @Test fun backspaceAmongManyBlankLinesRemovesOne() = assertEquals("甲\n\n|乙", backspace("甲\n\n\n|乙"))
 
     @Test fun forwardDeleteMergesParagraphs() = assertEquals("第一段|第二段", forwardDelete("第一段|\n\n第二段"))

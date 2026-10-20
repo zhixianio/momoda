@@ -45,7 +45,7 @@ class EditorView(context: Context) : EditText(context) {
     var onSelectionChange: ((Int, Int) -> Unit)? = null
 
     var charsPerLine = 30
-        set(value) { field = value; updatePadding() }
+        set(value) { if (field != value) { field = value; updatePadding() } }
 
     /** 载入文档时关掉分段规则，避免把文件里已有的换行再改一遍。 */
     var rulesEnabled = true
@@ -93,7 +93,10 @@ class EditorView(context: Context) : EditText(context) {
         isCursorVisible = false
     }
 
+    // 下面这些设置没变时什么都不做：切换 Zen、专注、Vim 时会把全部设置重新应用一遍，
+    // 而整篇重新渲染会替换编辑器里的文字，打断正在拼写的输入法（候选窗消失），长文档还要卡一下
     fun setFont(typeface: Typeface) {
+        if (typeface === this.typeface) return
         this.typeface = typeface
         invertedPaint.typeface = typeface
         hintPaint.typeface = typeface
@@ -102,6 +105,8 @@ class EditorView(context: Context) : EditText(context) {
     }
 
     fun setTextSizeSp(sp: Float) {
+        val px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, resources.displayMetrics)
+        if (px == textSize) return
         setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
         updatePadding()
         // 列表的悬挂缩进宽度按字号算，字号变了要重算
@@ -116,12 +121,12 @@ class EditorView(context: Context) : EditText(context) {
     /** 段距：段落之间的空行占几分之一行高（0 表示空行不占高度）。 */
     var paragraphSpacing: Float
         get() = spacing.ratio
-        set(v) { spacing.ratio = v; attachSpacing() }
+        set(v) { if (spacing.ratio != v) { spacing.ratio = v; attachSpacing() } }
 
     /** 段首缩进两字（只影响显示，不改文件）。 */
     var indentParagraphs: Boolean
         get() = styler.indent
-        set(v) { styler.indent = v; restyleAll() }
+        set(v) { if (styler.indent != v) { styler.indent = v; restyleAll() } }
 
     /**
      * 整篇重新渲染（字号、字体、缩进变化时）。不能直接在编辑器的文字上逐个改样式：

@@ -49,6 +49,11 @@ object EditRules {
         // 只有“文字\n\n文字”被删成“文字\n文字”时才合并；连续多个空行时只删一个，不连带。
         // 退格删的是后一个换行：剩下的那个在 pos-1
         if (isNl(pos - 1) && isText(pos - 2) && isText(pos)) return Edit(pos - 1, pos, "", pos - 1)
+        // 刚回车完又退格（回车写入的是 \n\n）：在文末，或者后面紧跟着下一段的段落分隔。
+        // 只删一个的话，光标停在中间那个压扁的段距空行上，要退两次才回到上一行末尾
+        if (isNl(pos - 1) && isText(pos - 2) && (pos == text.length || (isNl(pos) && isNl(pos + 1) && isText(pos + 2)))) {
+            return Edit(pos - 1, pos, "", pos - 1)
+        }
         // 向前删除（Delete 键）删的是前一个换行：剩下的那个在 pos
         if (isNl(pos) && isText(pos - 1) && isText(pos + 1)) return Edit(pos, pos + 1, "", pos)
         return null
