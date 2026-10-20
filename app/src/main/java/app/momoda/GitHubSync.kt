@@ -1,0 +1,254 @@
+package app.momoda
+
+import android.content.Context
+import android.os.Build
+import android.util.Base64
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/** GitHub 同步的配置。token 用 Android Keystore 加密保存。 */
+class SyncSettings(context: Context) {
+    private val prefs = context.getSharedPreferences("sync", Context.MODE_PRIVATE)
+
+    /** `owner/name` */
+    var repo: String
+        get() = prefs.getString("repo", "")!!
+        set(v) = prefs.edit().putString("repo", v.trim().removePrefix("https://github.com/").trim('/')).apply()
+
+    var branch: String
+        get() = prefs.getString("branch", "main")!!.ifBlank { "main" }
+        set(v) = prefs.edit().putString("branch", v.trim()).apply()
+
+    var token: String
+        get() = prefs.getString("token", null)?.let { runCatching { SecretBox.open(it) }.getOrNull() } ?: ""
+        set(v) = prefs.edit().putString("token", if (v.isBlank()) null else SecretBox.seal(v.trim())).apply()
+
+    var auto: Boolean
+        get() = prefs.getBoolean("auto", true)
+        set(v) = prefs.edit().putBoolean("auto", v).apply()
+
+    /** 默认 https://api.github.com；debug 包可以指向本地模拟服务。 */
+    var apiBase: String
+        get() = prefs.getString("apiBase", "https://api.github.com")!!
+        set(v) = prefs.edit().putString("apiBase", v).apply()
+
+    val configured get() = repo.matches(Regex("[^/\\s]+/[^/\\s]+")) && token.isNotBlank()
+}
+
+/**
+ * GitHub 同步（DESIGN §5）：直接调用 GitHub 的 REST API（Git Data API），设备上不放完整的 git。
+ *
+ * 一次同步：读远端最新提交的文件树 → 和本地、上次同步的状态三方比较（[SyncPlan]）→
+ * 下载、移进回收站、保存冲突副本 → 把本地的新增、修改、删除做成一个提交推上去。
+ * 推送时如果远端又有了新提交（非快进），整个流程重来，最多 3 次。
+ *
+ * 同步范围：文档目录里所有 .md（含子目录，例如 agent 写的 `_agent/`），不含隐藏目录（回收站）和 fonts/。
+ */
+class GitHubSync(
+    private val settings: SyncSettings,
+    private val dir: File,
+    private val stateFile: File,
+    private val moveToTrash: (File) -> Unit,
+) {
+    data class Result(val uploaded: Int, val downloaded: Int, val deleted: Int, val trashed: Int, val conflicts: List<String>) {
+        val changedLocal get() = downloaded + trashed + conflicts.size > 0
+        fun summary() = buildString {
+            val parts = mutableListOf<String>()
+            if (uploaded > 0) parts += "上传 $uploaded"
+            if (downloaded > 0) parts += "下载 $downloaded"
+            if (deleted > 0) parts += "远端删除 $deleted"
+            if (trashed > 0) parts += "移进回收站 $trashed"
+            if (conflicts.isNotEmpty()) parts += "冲突 ${conflicts.size}（远端版本已另存）"
+            append(if (parts.isEmpty()) "已是最新" else parts.joinToString("，"))
+        }
+    }
+
+    private class NotFastForward : Exception()
+
+    fun run(): Result {
+        repeat(3) { attempt ->
+            try {
+                return once()
+            } catch (e: NotFastForward) {
+                if (attempt == 2) throw IllegalStateException("远端一直在变化，稍后再试")
+            }
+        }
+        error("unreachable")
+    }
+
+    private fun once(): Result {
+        val (owner, name) = settings.repo.split('/', limit = 2)
+        val repoPath = "/repos/$owner/$name"
+        val branch = settings.branch
+
+        // 1. 远端：分支最新提交 → 文件树
+        val ref = try {
+            api("GET", "$repoPath/git/ref/heads/$branch")
+        } catch (e: HttpError) {
+            if (e.code == 404 || e.code == 409) error("找不到分支 $branch。如果仓库是空的，请在 GitHub 上先创建一个 README")
+            throw e
+        }
+        val headSha = ref.getJSONObject("object").getString("sha")
+        val treeSha = api("GET", "$repoPath/git/commits/$headSha").getJSONObject("tree").getString("sha")
+        val tree = api("GET", "$repoPath/git/trees/$treeSha?recursive=1")
+        if (tree.optBoolean("truncated")) error("仓库文件太多，GitHub 返回的文件树被截断了")
+        val remote = HashMap<String, String>()
+        val entries = tree.getJSONArray("tree")
+        for (i in 0 until entries.length()) {
+            val e = entries.getJSONObject(i)
+            val path = e.getString("path")
+            if (e.getString("type") == "blob" && inScope(path)) remote[path] = e.getString("sha")
+        }
+
+        // 2. 本地和上次同步的状态
+        val local = scanLocal()
+        val state = loadState()
+        val base = if (state.optString("key") == stateKey()) toMap(state.optJSONObject("base")) else emptyMap()
+
+        // 3. 决策并执行
+        val stamp = SimpleDateFormat("MMdd-HHmm", Locale.CHINA).format(Date())
+        val actions = SyncPlan.plan(local, remote, base, stamp)
+        val treeEntries = JSONArray()
+        var uploaded = 0; var downloaded = 0; var deleted = 0; var trashed = 0
+        val conflicts = mutableListOf<String>()
+        for (a in actions) {
+            when (a) {
+                is SyncPlan.Action.Download -> { writeLocal(a.path, blob(repoPath, remote.getValue(a.path))); downloaded++ }
+                is SyncPlan.Action.TrashLocal -> { moveToTrash(File(dir, a.path)); trashed++ }
+                is SyncPlan.Action.Conflict -> {
+                    writeLocal(a.copyPath, blob(repoPath, remote.getValue(a.path)))
+                    conflicts += a.copyPath
+                    treeEntries.put(uploadEntry(repoPath, a.path)); uploaded++
+                }
+                is SyncPlan.Action.Upload -> { treeEntries.put(uploadEntry(repoPath, a.path)); uploaded++ }
+                is SyncPlan.Action.DeleteRemote -> {
+                    treeEntries.put(JSONObject().put("path", a.path).put("mode", "100644").put("type", "blob").put("sha", JSONObject.NULL))
+                    deleted++
+                }
+            }
+        }
+
+        // 4. 推送一个提交
+        val remoteAfter = HashMap(remote)
+        if (treeEntries.length() > 0) {
+            val newTree = api("POST", "$repoPath/git/trees", JSONObject().put("base_tree", treeSha).put("tree", treeEntries)).getString("sha")
+            val message = "墨墨打同步：${if (uploaded > 0) "更新 $uploaded 篇" else ""}${if (uploaded > 0 && deleted > 0) "，" else ""}${if (deleted > 0) "删除 $deleted 篇" else ""}\n\n来自 ${Build.MANUFACTURER} ${Build.MODEL}"
+            val commit = api("POST", "$repoPath/git/commits", JSONObject()
+                .put("message", message).put("tree", newTree).put("parents", JSONArray().put(headSha))).getString("sha")
+            try {
+                api("PATCH", "$repoPath/git/refs/heads/$branch", JSONObject().put("sha", commit).put("force", false))
+            } catch (e: HttpError) {
+                if (e.code == 422) throw NotFastForward()
+                throw e
+            }
+            for (i in 0 until treeEntries.length()) {
+                val e = treeEntries.getJSONObject(i)
+                if (e.isNull("sha")) remoteAfter.remove(e.getString("path")) else remoteAfter[e.getString("path")] = e.getString("sha")
+            }
+        }
+
+        // 5. 记录新的“共同状态”：两边内容一致的文件
+        val localAfter = scanLocal()
+        val newBase = JSONObject()
+        for ((p, sha) in localAfter) if (remoteAfter[p] == sha) newBase.put(p, sha)
+        stateFile.writeText(JSONObject().put("key", stateKey()).put("base", newBase).put("time", System.currentTimeMillis()).toString())
+
+        return Result(uploaded, downloaded, deleted, trashed, conflicts)
+    }
+
+    /** 读取 GitHub 仓库信息，用于“测试连接”：返回能否写入。 */
+    fun check(): String {
+        val (owner, name) = settings.repo.split('/', limit = 2)
+        val r = api("GET", "/repos/$owner/$name")
+        val push = r.optJSONObject("permissions")?.optBoolean("push") ?: false
+        return if (push) "连接成功：${r.optString("full_name")}（可以写入）" else "能读取 ${r.optString("full_name")}，但没有写入权限：请给 token 加上 Contents 的 Read and write"
+    }
+
+    private fun stateKey() = "${settings.apiBase}|${settings.repo}|${settings.branch}"
+
+    private fun inScope(path: String): Boolean =
+        path.endsWith(".md") && path.split('/').none { it.startsWith(".") } && !path.startsWith("fonts/")
+
+    private fun scanLocal(): Map<String, String> {
+        val out = HashMap<String, String>()
+        dir.walkTopDown()
+            .onEnter { it == dir || (!it.name.startsWith(".") && !(it.parentFile == dir && it.name == "fonts")) }
+            .filter { it.isFile }
+            .forEach { f ->
+                val path = f.relativeTo(dir).invariantSeparatorsPath
+                if (inScope(path)) out[path] = SyncPlan.blobSha(f.readBytes())
+            }
+        return out
+    }
+
+    private fun writeLocal(path: String, bytes: ByteArray) {
+        val target = File(dir, path)
+        target.parentFile?.mkdirs()
+        val tmp = File(target.parentFile, ".${target.name}.sync")
+        FileOutputStream(tmp).use { it.write(bytes); it.fd.sync() }
+        if (!tmp.renameTo(target)) { target.writeBytes(bytes); tmp.delete() }
+    }
+
+    private fun uploadEntry(repoPath: String, path: String): JSONObject {
+        val bytes = File(dir, path).readBytes()
+        val sha = api("POST", "$repoPath/git/blobs", JSONObject()
+            .put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64")).getString("sha")
+        return JSONObject().put("path", path).put("mode", "100644").put("type", "blob").put("sha", sha)
+    }
+
+    private fun blob(repoPath: String, sha: String): ByteArray {
+        val r = api("GET", "$repoPath/git/blobs/$sha")
+        return Base64.decode(r.getString("content").replace("\n", ""), Base64.DEFAULT)
+    }
+
+    private fun loadState(): JSONObject = runCatching { JSONObject(stateFile.readText()) }.getOrDefault(JSONObject())
+
+    private fun toMap(o: JSONObject?): Map<String, String> {
+        if (o == null) return emptyMap()
+        val m = HashMap<String, String>()
+        for (k in o.keys()) m[k] = o.getString(k)
+        return m
+    }
+
+    class HttpError(val code: Int, message: String) : Exception(message)
+
+    private fun api(method: String, path: String, body: JSONObject? = null): JSONObject {
+        val conn = (URL(settings.apiBase.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+            // Android 的 HttpURLConnection（基于 OkHttp）支持 PATCH，更新分支引用要用它
+            requestMethod = method
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            setRequestProperty("Authorization", "Bearer ${settings.token}")
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
+        }
+        try {
+            if (body != null) conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) {
+                val msg = runCatching { JSONObject(text).optString("message") }.getOrNull().orEmpty().ifEmpty { text.take(200) }
+                throw HttpError(code, when (code) {
+                    401 -> "token 无效或已过期"
+                    403 -> "没有权限（$msg）"
+                    404 -> "找不到仓库 ${settings.repo}，或 token 没有访问它的权限"
+                    else -> "GitHub 返回 $code：$msg"
+                })
+            }
+            return if (text.isBlank()) JSONObject() else JSONObject(text)
+        } finally {
+            conn.disconnect()
+        }
+    }
+}

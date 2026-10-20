@@ -23,9 +23,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import kotlin.math.min
 
-private fun Context.px(v: Int) = (v * resources.displayMetrics.density).toInt()
+internal fun Context.px(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-private fun Context.inkButton(label: String, typeface: Typeface?, onClick: () -> Unit) = TextView(this).apply {
+internal fun Context.inkButton(label: String, typeface: Typeface?, onClick: () -> Unit) = TextView(this).apply {
     text = label
     setTextColor(Color.BLACK)
     setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -37,7 +37,7 @@ private fun Context.inkButton(label: String, typeface: Typeface?, onClick: () ->
     setOnClickListener { onClick() }
 }
 
-private fun Context.inkDialog(box: View, gravity: Int, widthFraction: Float, heightPx: Int): Dialog {
+internal fun Context.inkDialog(box: View, gravity: Int, widthFraction: Float, heightPx: Int): Dialog {
     val d = Dialog(this)
     d.requestWindowFeature(Window.FEATURE_NO_TITLE)
     d.setContentView(box)
@@ -52,7 +52,7 @@ private fun Context.inkDialog(box: View, gravity: Int, widthFraction: Float, hei
     return d
 }
 
-private fun Context.inkBox() = LinearLayout(this).apply {
+internal fun Context.inkBox() = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
     background = GradientDrawable().apply { setColor(Color.WHITE); setStroke(px(2), Color.BLACK) }
     setPadding(px(18), px(14), px(18), px(14))

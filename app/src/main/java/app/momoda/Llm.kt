@@ -120,7 +120,7 @@ class LlmSettings(context: Context) {
 }
 
 /** 用 Android Keystore 中不可导出的 AES-GCM 密钥加解密短文本。 */
-private object SecretBox {
+internal object SecretBox {
     private const val ALIAS = "momoda-llm-key"
 
     private fun key(): SecretKey {

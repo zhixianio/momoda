@@ -57,6 +57,9 @@ class MainActivity : Activity() {
     private val ui by lazy { getSharedPreferences("ui", Context.MODE_PRIVATE) }
     private val settings by lazy { UserSettings(this) }
     private val llm by lazy { LlmSettings(this) }
+    private val sync by lazy { SyncSettings(this) }
+    private var syncing = false
+    private var syncStatus = ""
     private val fonts by lazy { Fonts(assets) { store.dir } }
     private val updates by lazy {
         // debug 包可以用 `--es updateApi <url>` 指向本地模拟的发布地址做测试
@@ -92,6 +95,14 @@ class MainActivity : Activity() {
         Diagnostics.install(this) {
             // 崩溃前尽量把正在写的内容存下来
             if (::doc.isInitialized && dirty) store.write(doc, editor.text.toString())
+        }
+        if (BuildConfig.DEBUG) intent.getStringExtra("githubApi")?.let {
+            // debug 包：用本地模拟的 GitHub API 测试同步
+            SyncSettings(this).apply {
+                apiBase = it
+                intent.getStringExtra("githubRepo")?.let { r -> repo = r }
+                intent.getStringExtra("githubToken")?.let { t -> token = t }
+            }
         }
         if (BuildConfig.DEBUG) intent.getStringExtra("updateApi")?.let {
             getSharedPreferences("ui", Context.MODE_PRIVATE).edit().putString("updateApiOverride", it).apply()
@@ -224,6 +235,7 @@ class MainActivity : Activity() {
             // 离开期间文档被别的程序改过，而我们没有未保存的修改：直接载入新版本
             if (doc.exists()) loadDoc(doc) else loadDoc(store.openLastOrCreate())
         }
+        if (::doc.isInitialized) autoSync(minIntervalMs = 10 * 60_000L)
     }
 
     override fun onPause() {
@@ -233,6 +245,7 @@ class MainActivity : Activity() {
         // 离开 App 也算“离开文档”：文件名跟上标题
         doc = store.syncNameWithTitle(doc, editor.text.toString())
         store.lastDocName = doc.name
+        autoSync(minIntervalMs = 2 * 60_000L)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -478,6 +491,7 @@ class MainActivity : Activity() {
             keyCode == KeyEvent.KEYCODE_TAB -> { switchToPrevious(); "上一篇" }
             keyCode == KeyEvent.KEYCODE_K && !shift -> { showPalette(); "命令面板" }
             keyCode == KeyEvent.KEYCODE_S && !shift -> { save(); "保存" }
+            keyCode == KeyEvent.KEYCODE_S && shift -> { syncNow(force = true); "同步" }
             keyCode == KeyEvent.KEYCODE_B && !shift -> { wrap("**"); "粗体" }
             keyCode == KeyEvent.KEYCODE_I && !shift -> { wrap("*"); "斜体" }
             keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_3 && !shift -> {
@@ -524,6 +538,8 @@ class MainActivity : Activity() {
         add(Command("rename", "修改标题", "", ::renameTitle))
         add(Command("manage", "管理文档", "回收站、排序、批量查看", ::showManager))
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
+        add(Command("sync", "立即同步", if (sync.configured) "${sync.repo} · Ctrl+Shift+S" else "未配置", { syncNow(force = true) }))
+        add(Command("sync-settings", "GitHub 同步设置", if (sync.configured) sync.repo else "未配置", ::showSyncConfig))
         add(Command("ai", "AI 助手", "Ctrl+J", ::showAi))
         add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "未配置", ::showAiConfig))
         add(Command("ai-prompts", "编辑 AI 指令", Prompts.FILE_NAME, ::editPrompts))
@@ -755,6 +771,57 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------- GitHub 同步（DESIGN §5） ----------
+
+    private fun makeSync() = GitHubSync(sync, store.dir, File(filesDir, "sync-state.json")) { f -> store.moveToTrash(f) }
+
+    private fun showSyncConfig() {
+        save()
+        SyncConfigPanel(this, font, sync, ::makeSync, onDismiss = ::returnToEditor).show()
+    }
+
+    private val syncPrefs by lazy { getSharedPreferences("sync", Context.MODE_PRIVATE) }
+
+    /** 自动同步：离开 App 时（距上次超过 2 分钟）和回到 App 时（距上次超过 10 分钟）。 */
+    private fun autoSync(minIntervalMs: Long) {
+        if (!sync.auto || !sync.configured) return
+        if (System.currentTimeMillis() - syncPrefs.getLong("lastSync", 0) < minIntervalMs) return
+        syncNow(force = false)
+    }
+
+    private fun syncNow(force: Boolean) {
+        if (!sync.configured) { if (force) showSyncConfig(); return }
+        if (syncing) return
+        syncing = true
+        save()
+        syncStatus = "同步中"
+        refreshChrome()
+        val engine = makeSync()
+        Thread({
+            val r = runCatching { engine.run() }
+            handler.post {
+                syncing = false
+                r.onSuccess { res ->
+                    syncPrefs.edit().putLong("lastSync", System.currentTimeMillis()).apply()
+                    syncStatus = "已同步 " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date())
+                    if (force || res.conflicts.isNotEmpty() || res.trashed > 0) toast("同步：${res.summary()}")
+                    if (res.changedLocal) afterExternalChange()
+                }.onFailure {
+                    Log.w("momoda", "同步失败", it)
+                    syncStatus = "同步失败"
+                    if (force) toast("同步失败：${it.message ?: it.javaClass.simpleName}")
+                }
+                refreshChrome()
+            }
+        }, "github-sync").apply { isDaemon = true }.start()
+    }
+
+    /** 同步改动了本地文件：当前文档被删就换一篇；没有未保存修改就载入新版本。 */
+    private fun afterExternalChange() {
+        if (!doc.exists()) { dirty = false; loadDoc(store.openLastOrCreate()); return }
+        if (!dirty && store.changedOnDisk(doc)) loadDoc(doc)
+    }
+
     // ---------- 更新 ----------
 
     private fun checkForUpdates(force: Boolean) {
@@ -803,7 +870,7 @@ class MainActivity : Activity() {
         headerTitle.text = Titles.titleOf(editor.text) ?: "未命名"
         val words = TextStats.format(TextStats.wordCount(editor.text))
         val where = if (store.isPublic) "" else " · 未授权存储"
-        val update = updates.latest?.let { " · 有新版本 ${it.version}" } ?: ""
+        val update = (updates.latest?.let { " · 有新版本 ${it.version}" } ?: "") + (if (syncStatus.isNotEmpty()) " · $syncStatus" else "")
         val state = when {
             saveError != null -> "保存失败，正在重试"
             dirty -> "保存中"
