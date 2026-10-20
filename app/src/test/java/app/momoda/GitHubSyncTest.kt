@@ -175,5 +175,26 @@ class GitHubSyncTest {
         assertEquals("已是最新", sync().summary())
     }
 
+    @Test fun remoteNamesDifferingOnlyInCaseAreNotMixedUp() {
+        gh.push(mapOf("A.md" to "大写", "a.md" to "小写"))
+        val r = sync()
+        assertEquals(listOf("a.md"), r.skipped)
+        assertEquals(listOf("A.md"), docs.list()!!.filter { it.endsWith(".md") })
+        assertEquals("大写", read("A.md"))
+        // 再同步也不会把远端的哪一个覆盖或删掉
+        write("A.md", "大写 改过")
+        sync()
+        assertEquals(mapOf("A.md" to "大写 改过", "a.md" to "小写"), gh.files())
+    }
+
+    @Test fun caseOnlyRenameOnRemoteFollowsInOneSync() {
+        write("a.md", "内容")
+        sync()
+        gh.push(mapOf("a.md" to null, "A.md" to "内容"))
+        sync()
+        assertEquals(listOf("A.md"), docs.list()!!.filter { it.endsWith(".md") })
+        assertEquals("内容", read("A.md"))
+    }
+
     @Test fun targetToStringHidesToken() = assertFalse(target().toString().contains("secret-token"))
 }

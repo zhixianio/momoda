@@ -91,7 +91,11 @@ class GitHubSync(
         fun call(method: String, path: String, body: JSONObject?): JSONObject
     }
 
-    data class Result(val uploaded: Int, val downloaded: Int, val deleted: Int, val trashed: Int, val conflicts: List<String>) {
+    data class Result(
+        val uploaded: Int, val downloaded: Int, val deleted: Int, val trashed: Int, val conflicts: List<String>,
+        /** 和别的文件只差大小写、本地放不下而没有同步的远端文件。 */
+        val skipped: List<String> = emptyList(),
+    ) {
         val changedLocal get() = downloaded + trashed + conflicts.size > 0
         fun summary() = buildString {
             val parts = mutableListOf<String>()
@@ -100,6 +104,7 @@ class GitHubSync(
             if (deleted > 0) parts += "远端删除 $deleted"
             if (trashed > 0) parts += "移进回收站 $trashed"
             if (conflicts.isNotEmpty()) parts += "冲突 ${conflicts.size}（远端版本已另存）"
+            if (skipped.isNotEmpty()) parts += "跳过 ${skipped.joinToString("、")}（和别的文件只差大小写，请在电脑上改名）"
             append(if (parts.isEmpty()) "已是最新" else parts.joinToString("，"))
         }
     }
@@ -167,6 +172,10 @@ class GitHubSync(
         val key = state.optString("key")
         val base = if (key == stateKey() || key == legacyStateKey()) toMap(state.optJSONObject("base")) else emptyMap()
 
+        // 只差大小写的远端文件本地放不下，这次不同步，也不会因为“本地没有”去删远端的
+        val skipped = SyncPlan.caseClashes(local, remote, base).sorted()
+        remote.keys.removeAll(skipped.toSet())
+
         // 3. 决策并执行
         val stamp = SimpleDateFormat("MMdd-HHmm", Locale.CHINA).format(Date())
         val actions = SyncPlan.plan(local, remote, base, stamp)
@@ -225,7 +234,7 @@ class GitHubSync(
         for ((p, sha) in SyncPlan.nextBase(agreed, remoteAfter, base)) newBase.put(p, sha)
         stateFile.writeText(JSONObject().put("key", stateKey()).put("base", newBase).put("time", System.currentTimeMillis()).toString())
 
-        return Result(uploaded, downloaded, deleted, trashed, conflicts)
+        return Result(uploaded, downloaded, deleted, trashed, conflicts, skipped)
     }
 
     /** 读取 GitHub 仓库信息，用于“测试连接”：返回能否写入。 */

@@ -1,6 +1,7 @@
 package app.momoda
 
 import java.security.MessageDigest
+import java.util.Locale
 
 /**
  * GitHub 同步的决策（DESIGN §5），纯逻辑。
@@ -48,6 +49,25 @@ object SyncPlan {
                 r == null -> out += Action.Upload(path)                                    // 远端删了，但本地又改过：推回去
                 else -> out += Action.Conflict(path, copyName(path, stamp, r!!, local, remote)) // 两边都改了
             }
+        }
+        // 远端把 a.md 改名成 A.md 时先把 a.md 移进回收站再下载：大小写不敏感的存储上要先腾出位置
+        val sameName = out.groupingBy { it.path.lowercase(Locale.ROOT) }.eachCount()
+        return out.sortedBy { if (it is Action.TrashLocal && sameName.getValue(it.path.lowercase(Locale.ROOT)) > 1) 0 else 1 }
+    }
+
+    /**
+     * 远端里只差大小写的路径（A.md 和 a.md）。手机的共享存储不区分大小写，本地只能放下其中一个，
+     * 返回本地放不下、这次不同步的远端路径（远端原样保留）：
+     * - 本地已有其中一个写法：保留本地的写法；
+     * - 本地的都要移进回收站（远端只改了大小写）或本地都没有：只同步排在最前的一个远端写法。
+     */
+    fun caseClashes(local: Map<String, String>, remote: Map<String, String>, base: Map<String, String>): Set<String> {
+        val out = HashSet<String>()
+        for (group in (local.keys + remote.keys).groupBy { it.lowercase(Locale.ROOT) }.values) {
+            if (group.size < 2) continue
+            val remoteOnly = group.filter { it !in local }.sorted()
+            val staying = group.filter { it in local && !(local[it] == base[it] && it !in remote) }
+            out += if (staying.isEmpty()) remoteOnly.drop(1) else remoteOnly
         }
         return out
     }

@@ -891,7 +891,7 @@ class MainActivity : Activity() {
                 r.onSuccess { res ->
                     syncPrefs.edit().putLong("lastSync", System.currentTimeMillis()).apply()
                     syncStatus = "已同步 " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date())
-                    if (force || res.conflicts.isNotEmpty() || res.trashed > 0) toast("同步：${res.summary()}")
+                    if (force || res.conflicts.isNotEmpty() || res.trashed > 0 || res.skipped.isNotEmpty()) toast("同步：${res.summary()}")
                     if (res.changedLocal) afterExternalChange()
                 }.onFailure {
                     if (it is GitHubSync.Busy) {

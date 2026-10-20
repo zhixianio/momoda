@@ -75,4 +75,22 @@ class SyncPlanTest {
         // 空文件
         assertEquals("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391", SyncPlan.blobSha(ByteArray(0)))
     }
+
+    @Test fun caseClashKeepsLocalSpelling() =
+        assertEquals(setOf("a.md"), SyncPlan.caseClashes(mapOf("A.md" to "1"), mapOf("A.md" to "1", "a.md" to "2"), mapOf("A.md" to "1")))
+
+    @Test fun caseClashWithNothingLocalSyncsFirstSpelling() =
+        assertEquals(setOf("a.md", "notes/A.md"), SyncPlan.caseClashes(emptyMap(), mapOf("A.md" to "1", "a.md" to "2", "Notes/a.md" to "3", "notes/A.md" to "4"), emptyMap()))
+
+    @Test fun caseOnlyRenameOnRemoteIsNotAClash() {
+        val local = mapOf("a.md" to "1")
+        val remote = mapOf("A.md" to "1")
+        val base = mapOf("a.md" to "1")
+        assertEquals(emptySet<String>(), SyncPlan.caseClashes(local, remote, base))
+        // 先腾出位置再下载
+        assertEquals(listOf(TrashLocal("a.md"), Download("A.md")), plan(local, remote, base))
+    }
+
+    @Test fun bothSpellingsLocalIsNotAClash() =
+        assertEquals(emptySet<String>(), SyncPlan.caseClashes(mapOf("A.md" to "1", "a.md" to "2"), mapOf("A.md" to "1", "a.md" to "2"), emptyMap()))
 }
