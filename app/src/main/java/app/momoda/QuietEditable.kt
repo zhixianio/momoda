@@ -2,23 +2,26 @@ package app.momoda
 
 import android.text.Editable
 import android.text.SpanWatcher
+import android.text.Spannable
 import android.text.SpannableStringBuilder
 
 /**
  * 编辑器用的 Editable。
  *
- * SpannableStringBuilder 每次插入或删除文字后，会给插入点之后的**每一个**样式发一次“位置变了”；
- * DynamicLayout 收到影响排版的样式（标题、粗体、斜体、全角引号）就把它所在的段落重排一遍。
- * 在长文档的前部打一个字，等于把后面全文重排一遍：10 万字在模拟器上每个字要 5 秒，汉王上更慢。
+ * SpannableStringBuilder 每次插入或删除文字后，会给插入点之后的**每一个**样式发一次“位置变了”。
+ * DynamicLayout 收到影响排版的样式（标题、粗体、斜体、全角引号）就把它所在的段落重排一遍，
+ * TextView 收到每一个都要把相关的显示块作废一遍。在长文档的前部打一个字，等于把后面全文处理一遍：
+ * 10 万字在模拟器上每个字要 5 秒，满是中文引号时也要 1.5 秒，汉王上更慢。
  *
- * 这些样式只是跟着文字平移，排版没有变；被改动的那一段，DynamicLayout 已经按文字变化重排过了。
- * 所以文字变化引起的样式平移不再通知 DynamicLayout；我们自己调用 setSpan / removeSpan（渲染 Markdown）照常通知。
+ * 这些 Markdown 样式只是跟着文字平移，显示不会变；被改动的那几行，DynamicLayout 已经按文字变化重排过，
+ * 随后 [MarkdownStyler] 也会把它们的样式删掉重加（增删照常通知）。
+ * 所以文字变化过程中，Markdown 样式的“位置变了”不再转发；选区、输入法拼写区等其他样式照常转发。
  */
 class QuietEditable(source: CharSequence) : SpannableStringBuilder(source) {
 
     /** 正在执行的 replace 层数（分段规则会在文字变化的回调里再改一次文字）。 */
     private var replacing = 0
-    /** 正在执行的 setSpan / removeSpan 层数。 */
+    /** 正在执行的 setSpan / removeSpan 层数：我们自己移动样式时照常通知。 */
     private var explicit = 0
 
     override fun replace(start: Int, end: Int, tb: CharSequence, tbstart: Int, tbend: Int): SpannableStringBuilder {
@@ -48,26 +51,35 @@ class QuietEditable(source: CharSequence) : SpannableStringBuilder(source) {
         }
     }
 
+    // 上一次换上的过滤器：打一个字要查几千次 SpanWatcher，每次都是同样几个，不必每次新建
+    private var lastWatchers: Array<*> = emptyArray<Any>()
+    private var lastFiltered: Array<*> = emptyArray<Any>()
+
     // SpannableStringBuilder 通知样式变化前用这个方法找 SpanWatcher
     override fun <T : Any?> getSpans(queryStart: Int, queryEnd: Int, kind: Class<T>?): Array<T> {
         val spans = super.getSpans(queryStart, queryEnd, kind)
-        if (kind != SpanWatcher::class.java || spans.none { hidesFromLayout(it!!.javaClass.name, replacing, explicit) }) return spans
-        val kept = spans.filterNot { hidesFromLayout(it!!.javaClass.name, replacing, explicit) }
+        if (kind != SpanWatcher::class.java || replacing == 0 || explicit > 0 || spans.isEmpty()) return spans
+        if (!(spans contentEquals lastWatchers)) {
+            lastWatchers = spans.copyOf()
+            lastFiltered = Array(spans.size) { ShiftFilter(spans[it] as SpanWatcher) }
+        }
         @Suppress("UNCHECKED_CAST")
-        val out = java.lang.reflect.Array.newInstance(kind, kept.size) as Array<T>
-        kept.forEachIndexed { i, s -> out[i] = s }
-        return out
+        for (i in spans.indices) spans[i] = lastFiltered[i] as T
+        return spans
+    }
+
+    /** 转发给 [target]，但不转发 Markdown 样式的“位置变了”。 */
+    class ShiftFilter(private val target: SpanWatcher) : SpanWatcher {
+        override fun onSpanAdded(text: Spannable, what: Any, start: Int, end: Int) = target.onSpanAdded(text, what, start, end)
+
+        override fun onSpanRemoved(text: Spannable, what: Any, start: Int, end: Int) = target.onSpanRemoved(text, what, start, end)
+
+        override fun onSpanChanged(text: Spannable, what: Any, ostart: Int, oend: Int, nstart: Int, nend: Int) {
+            if (what !is MdSpan) target.onSpanChanged(text, what, ostart, oend, nstart, nend)
+        }
     }
 
     object Factory : Editable.Factory() {
         override fun newEditable(source: CharSequence): Editable = QuietEditable(source)
-    }
-
-    companion object {
-        private const val LAYOUT_WATCHER = "android.text.DynamicLayout\$ChangeWatcher"
-
-        /** 文字变化过程中（不在我们自己的 setSpan / removeSpan 里）的样式通知，不发给 DynamicLayout。 */
-        fun hidesFromLayout(watcherClass: String, replacing: Int, explicit: Int): Boolean =
-            watcherClass == LAYOUT_WATCHER && replacing > 0 && explicit == 0
     }
 }
