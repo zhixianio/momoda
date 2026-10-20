@@ -178,7 +178,7 @@ class EditorView(context: Context) : EditText(context) {
         val side = max(dp(40).toFloat(), (width - column) / 2f).toInt()
         // 底部内边距不能大：TextView 不在内边距里画字，大了下面那块就永远是空白，像文档已经到头。
         // “光标别写到最底下”和“文末能翻到屏幕上部”分别由 [writingMargin] 和 [overscroll] 负责。
-        setPadding(side, dp(40), side, dp(40))
+        setPadding(side, dp(40), side, dp(12))
     }
 
     /** 光标进入屏幕底部这一段就翻页：留给输入法候选栏，也让视线停在中上部。 */
@@ -447,7 +447,17 @@ class EditorView(context: Context) : EditText(context) {
     // ---------- 绘制：常亮光标、标题占位 ----------
 
     override fun onDraw(canvas: Canvas) {
+        // 底部只画完整的行：被切掉一半的行在墨水屏上很难看，留白到下一次翻页
+        val saved = canvas.save()
+        layout?.let { l ->
+            val limit = scrollY + height - extendedPaddingBottom
+            val line = l.getLineForVertical(limit - extendedPaddingTop)
+            if (l.getLineBottom(line) + extendedPaddingTop > limit) {
+                canvas.clipRect(0, scrollY, width, l.getLineTop(line) + extendedPaddingTop)
+            }
+        }
         super.onDraw(canvas)
+        canvas.restoreToCount(saved)
         val l = layout
         if (l != null) {
             drawTitleHint(canvas, l)

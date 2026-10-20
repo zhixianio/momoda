@@ -6,7 +6,7 @@
 - 也可以直接点击右下角的「⋯」
 - Ctrl+N 新建，Ctrl+O 切换文档
 - Ctrl+. Zen 模式（隐藏页眉页脚），Ctrl+Shift+F 专注模式（只突出当前段落）
-- Ctrl+Shift+V Vim 模式：Esc 进入普通模式，hjkl 移动，i 回到输入
+- Ctrl+Shift+V Vim 模式：Esc 普通模式，hjkl 移动，i 输入
 
 ## 写作
 
