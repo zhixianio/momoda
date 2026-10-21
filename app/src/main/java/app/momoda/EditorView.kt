@@ -353,6 +353,7 @@ class EditorView(context: Context) : EditText(context) {
         // 等这一轮编辑（含分段规则补的那个换行）做完再检查，不在中途挪光标
         removeCallbacks(gapGuard)
         post(gapGuard)
+        scheduleAnchor()
         onSelectionChange?.invoke(selStart, selEnd)
         browsing = false
         updateFocus()
@@ -432,6 +433,94 @@ class EditorView(context: Context) : EditText(context) {
 
     var scrollMode = ScrollMode.CONTINUOUS
 
+    // ---------- 输入法候选窗的位置 ----------
+
+    /**
+     * 输入法的浮动候选窗（fcitx5 等）放在哪里，取决于 App 通过 CursorAnchorInfo 报告的光标位置：
+     * 输入法把候选窗贴在这个位置下方，下方放不下时放到上方。墨墨打可以报告一个固定的位置，
+     * 让候选窗不随每个字挪动，墨水屏刷新的区域固定、残影少。
+     */
+    enum class CandidatePosition(val label: String) {
+        /** 系统默认：贴着光标。 */
+        FOLLOW("跟随光标"),
+        /** 当前行下方、版心左边：只随换行上下移动，不随每个字左右挪。 */
+        BELOW_LINE("当前行下方"),
+        /** 编辑区最下面一条：位置永远不变，光标不会写到那一条里。 */
+        BOTTOM("底部固定"),
+    }
+
+    var candidatePosition = CandidatePosition.FOLLOW
+        set(value) {
+            if (field == value) return
+            field = value
+            // 让输入法重新连接、重新请求光标位置：默认方式由系统 Editor 报告，其余由 [reportAnchor] 报告
+            context.getSystemService(android.view.inputmethod.InputMethodManager::class.java)?.restartInput(this)
+        }
+
+    /** 输入法要求持续报告光标位置（CURSOR_UPDATE_MONITOR）。 */
+    private var anchorMonitoring = false
+    private val anchorRunnable = Runnable { reportAnchor() }
+
+    /** 底部固定时，编辑区最下面留给候选窗的高度：光标不会写到这里。 */
+    private val candidateReserve get() = if (candidatePosition == CandidatePosition.BOTTOM) dp(96) else 0
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): android.view.inputmethod.InputConnection? {
+        val ic = super.onCreateInputConnection(outAttrs) ?: return null
+        anchorMonitoring = false
+        return object : android.view.inputmethod.InputConnectionWrapper(ic, false) {
+            // 照常交给系统：系统要先记下“输入法在等光标位置”，才会转发 App 报告的位置。
+            // 系统自己也会报告一份（贴着光标），[onDraw] 里每一帧再报告一次我们的位置，盖掉它
+            override fun requestCursorUpdates(mode: Int): Boolean {
+                noteCursorRequest(mode)
+                return super.requestCursorUpdates(mode)
+            }
+
+            override fun requestCursorUpdates(mode: Int, filter: Int): Boolean {
+                noteCursorRequest(mode)
+                return super.requestCursorUpdates(mode, filter)
+            }
+        }
+    }
+
+    private fun noteCursorRequest(mode: Int) {
+        anchorMonitoring = mode and android.view.inputmethod.InputConnection.CURSOR_UPDATE_MONITOR != 0
+        if (mode and android.view.inputmethod.InputConnection.CURSOR_UPDATE_IMMEDIATE != 0) scheduleAnchor(force = true)
+    }
+
+    private fun scheduleAnchor(force: Boolean = false) {
+        if (candidatePosition == CandidatePosition.FOLLOW || !(anchorMonitoring || force)) return
+        removeCallbacks(anchorRunnable)
+        post(anchorRunnable)
+    }
+
+    /** 按 [candidatePosition] 报告光标位置（输入法据此摆候选窗）。 */
+    private fun reportAnchor() {
+        val l = layout ?: return
+        val t = text ?: return
+        val imm = context.getSystemService(android.view.inputmethod.InputMethodManager::class.java) ?: return
+        val line = l.getLineForOffset(selectionEnd.coerceAtLeast(0))
+        val dy = (extendedPaddingTop - scrollY).toFloat()
+        val x = compoundPaddingLeft.toFloat()
+        val (top, bottom) = when (candidatePosition) {
+            CandidatePosition.BOTTOM -> {
+                // 报告在编辑区底边：下面放不下，候选窗就摆在它上方，也就是编辑区最下面那一条
+                val y = height.toFloat()
+                y to y
+            }
+            else -> (l.getLineTop(line) + dy) to (l.getLineBottom(line) + dy)
+        }
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        val b = android.view.inputmethod.CursorAnchorInfo.Builder()
+            .setMatrix(android.graphics.Matrix().apply { setTranslate(loc[0].toFloat(), loc[1].toFloat()) })
+            .setSelectionRange(selectionStart, selectionEnd)
+            .setInsertionMarkerLocation(x, top, bottom, bottom, android.view.inputmethod.CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION)
+        val cs = BaseInputConnection.getComposingSpanStart(t)
+        val ce = BaseInputConnection.getComposingSpanEnd(t)
+        if (cs in 0..ce) b.setComposingText(cs, t.subSequence(cs, ce))
+        imm.updateCursorAnchorInfo(this, b.build())
+    }
+
     /**
      * 让光标留在屏幕上。连续模式下只滚到刚好露出光标所在行和下一行（往上时是上一行），一次一行；
      * 半页、整页模式下一次跳一大段，墨水屏整屏刷新的次数少。滚动位置都对齐到行首，屏幕顶端不出现半行字。
@@ -451,10 +540,10 @@ class EditorView(context: Context) : EditText(context) {
             val prev = (if (gap(line - 1)) line - 2 else line - 1).coerceAtLeast(0)
             val below = l.getLineBottom(next) - l.getLineBottom(line)
             val above = l.getLineTop(line) - l.getLineTop(prev)
-            val visibleBottom = scrollY + height - extendedPaddingBottom
+            val visibleBottom = scrollY + height - extendedPaddingBottom - candidateReserve
             val target = when {
                 bottom + below > visibleBottom -> {
-                    val min = bottom + below - (height - extendedPaddingBottom)
+                    val min = bottom + below - (height - extendedPaddingBottom - candidateReserve)
                     var ln = l.getLineForVertical(min)
                     if (l.getLineTop(ln) < min && ln + 1 < l.lineCount) ln++
                     // 屏幕顶端不停在段距空行上：否则下一次只滚这 1/4 行
@@ -467,7 +556,7 @@ class EditorView(context: Context) : EditText(context) {
             if (target != scrollY) scrollTo(0, max(0, target))
             return
         }
-        val writableBottom = scrollY + height - (if (scrollMode == ScrollMode.FULL) extendedPaddingBottom else writingMargin)
+        val writableBottom = scrollY + height - maxOf(if (scrollMode == ScrollMode.FULL) extendedPaddingBottom else writingMargin, candidateReserve)
         val tooLow = bottom > writableBottom - lineHeight
         val tooHigh = top < scrollY + extendedPaddingTop
         if (tooLow || tooHigh) {
@@ -537,6 +626,7 @@ class EditorView(context: Context) : EditText(context) {
 
     override fun onScrollChanged(horiz: Int, vert: Int, oldHoriz: Int, oldVert: Int) {
         super.onScrollChanged(horiz, vert, oldHoriz, oldVert)
+        scheduleAnchor()
         if (BuildConfig.DEBUG && vert != oldVert) {
             // 诊断用（只在 debug 包里）：记录是谁触发了滚动
             val by = Throwable().stackTrace.drop(1)
@@ -559,6 +649,8 @@ class EditorView(context: Context) : EditText(context) {
         }
         super.onDraw(canvas)
         canvas.restoreToCount(saved)
+        // 系统在这一帧绘制前报告了贴着光标的位置，这里紧跟着报告我们的，输入法以最后一份为准
+        if (anchorMonitoring && candidatePosition != CandidatePosition.FOLLOW) reportAnchor()
         val l = layout
         if (l != null) {
             drawTitleHint(canvas, l)

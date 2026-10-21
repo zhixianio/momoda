@@ -655,6 +655,7 @@ class MainActivity : Activity() {
         // 调试面板（按键记录、刷新耗时）不放进命令面板，排查问题时用 Ctrl+Shift+D 打开
         // 把 CapsLock 改成 Ctrl：在这里给键盘选用墨墨打提供的布局（res/xml/keyboard_layouts.xml）。
         // App 自己拦 CapsLock 拦不住大写锁定（系统先切换了才交给 App），所以只走系统布局这一条路
+        add(Command("ime-settings", "输入法设置", "当前输入法自己的设置：候选窗大小、预编辑等", ::openImeSettings))
         add(Command("hardkeyboard", "系统设置 · 实体键盘", "可选用布局“墨墨打：CapsLock 当 Ctrl”") {
             openSystemSettings(Settings.ACTION_HARD_KEYBOARD_SETTINGS, "Settings\$PhysicalKeyboardActivity")
         })
@@ -681,6 +682,25 @@ class MainActivity : Activity() {
     }
 
     /** 有些墨水屏厂商的定制设置里藏掉了这些页面，直接拉起系统原生设置。 */
+    /** 打开当前输入法自己的设置页（fcitx5 的候选窗大小、预编辑等都在那里）；找不到就打开系统的输入法设置。 */
+    private fun openImeSettings() {
+        val imm = getSystemService(InputMethodManager::class.java)
+        val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+        val info = imm.enabledInputMethodList.firstOrNull { it.id == current }
+        val activity = info?.settingsActivity
+        val intent = if (info != null && !activity.isNullOrEmpty()) {
+            Intent(Intent.ACTION_MAIN).setClassName(info.packageName, activity)
+        } else {
+            Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
+        }
+        try {
+            startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            Log.w("momoda", "无法打开输入法设置", e)
+            toast("打不开输入法设置")
+        }
+    }
+
     private fun openSystemSettings(action: String, fallbackActivity: String) {
         val intents = listOf(
             Intent(action),
@@ -746,6 +766,7 @@ class MainActivity : Activity() {
         editor.indentParagraphs = settings.indent
         editor.focusMode = settings.focus
         editor.scrollMode = settings.scrollMode
+        editor.candidatePosition = settings.candidatePosition
         if (vim.enabled != settings.vim) vim.enabled = settings.vim
         val v = if (settings.chrome) View.VISIBLE else View.GONE
         header.visibility = v
@@ -783,6 +804,9 @@ class MainActivity : Activity() {
             SettingsPanel.Row("版心宽度", { "每行 ${settings.charsPerLine} 字" }, { d -> settings.charsPerLine += 2 * d; applySettings() }),
             SettingsPanel.Row("翻页方式", { settings.scrollMode.label }, { d ->
                 settings.scrollMode = step(EditorView.ScrollMode.entries, settings.scrollMode, d); applySettings()
+            }),
+            SettingsPanel.Row("候选窗位置", { settings.candidatePosition.label }, { d ->
+                settings.candidatePosition = step(EditorView.CandidatePosition.entries, settings.candidatePosition, d); applySettings()
             }),
             SettingsPanel.Row("段首缩进两字", { onOff(settings.indent) }, { settings.indent = !settings.indent; applySettings() }, isToggle = true),
             SettingsPanel.Row("页眉页脚", { onOff(settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true),
