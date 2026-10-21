@@ -70,7 +70,9 @@ class MainActivity : Activity() {
     private val llm by lazy { LlmSettings(this) }
     private val sync by lazy { SyncSettings(this) }
     private var syncing = false
+    /** 同步的状态：同步中、离线、同步失败；成功后为空，页眉按 [syncedAt] 显示“n 分钟前同步”。 */
     private var syncStatus = ""
+    private var syncedAt = 0L
     private val fonts by lazy { Fonts(assets) { store.dir } }
     private val updatesLazy = lazy {
         // debug 包可以用 `--es updateApi <url>` 指向本地模拟的发布地址做测试
@@ -210,7 +212,6 @@ class MainActivity : Activity() {
         footerMode = chromeText().apply {
             gravity = Gravity.CENTER
             maxLines = 1
-            setTextColor(Color.BLACK)
         }
         footerNotes = chromeText().apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
@@ -273,6 +274,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
+        hideSoftKeyboardIfHardware()
         handler.post(clockRunnable)
         // 刚从系统设置授权回来：把文档搬到 Documents/momoda，并重新打开
         if (store.refreshLocation()) {
@@ -587,6 +589,8 @@ class MainActivity : Activity() {
             }
             keyCode == KeyEvent.KEYCODE_PERIOD -> { toggleZen(); "zen" }
             keyCode == KeyEvent.KEYCODE_COMMA -> { showSettings(); "设置" }
+            keyCode == KeyEvent.KEYCODE_L && shift -> { toggleMeasuring(); "延迟测量" }
+            keyCode == KeyEvent.KEYCODE_K && shift -> { toggleSoftKeyboard(); "软键盘" }
             keyCode == KeyEvent.KEYCODE_J && !shift -> { showAi(); "AI" }
             keyCode == KeyEvent.KEYCODE_EQUALS || keyCode == KeyEvent.KEYCODE_PLUS -> { changeTextSize(+1f); "字号+" }
             keyCode == KeyEvent.KEYCODE_MINUS -> { changeTextSize(-1f); "字号-" }
@@ -648,6 +652,7 @@ class MainActivity : Activity() {
         add(Command("paste", "从其他设备粘贴", "在手机或电脑上填写，传到这台设备", ::showPaste))
         group = "其他"
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
+        add(Command("soft-keyboard", "显示 / 收起软键盘", "Ctrl+Shift+K", ::toggleSoftKeyboard))
         if (!store.isPublic) add(Command("access", "授权：把文档存到 Documents/momoda", "", ::requestStorageAccess))
         updates.latest?.let { r -> add(Command("install-update", "安装新版本 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
         add(Command("check-update", "检查更新", if (updates.configured) "" else "尚未配置发布地址") { checkForUpdates(force = true) })
@@ -724,6 +729,32 @@ class MainActivity : Activity() {
     private fun returnToEditor() {
         editor.requestFocus()
         getSystemService(InputMethodManager::class.java).restartInput(editor)
+        hideSoftKeyboardIfHardware()
+    }
+
+    /** 接着实体键盘：用不到软键盘。系统有时在重新连接输入法时把它叫出来，这里收起。 */
+    private fun hasHardKeyboard(): Boolean = resources.configuration.let {
+        it.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
+            it.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
+    }
+
+    private fun hideSoftKeyboardIfHardware() {
+        if (hasHardKeyboard()) editor.post {
+            getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(editor.windowToken, 0)
+        }
+    }
+
+    private var softKeyboardShown = false
+
+    /** Ctrl+Shift+K：显示或收起软键盘（实体键盘上没有别的办法收起它）。 */
+    private fun toggleSoftKeyboard() {
+        val imm = getSystemService(InputMethodManager::class.java)
+        // Android 11 起可以直接问系统软键盘在不在；更早的系统按上次自己切换的结果来
+        val shown = if (Build.VERSION.SDK_INT >= 30) editor.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) ?: false
+        else softKeyboardShown
+        softKeyboardShown = !shown
+        if (shown) imm.hideSoftInputFromWindow(editor.windowToken, 0)
+        else { editor.requestFocus(); imm.showSoftInput(editor, InputMethodManager.SHOW_FORCED) }
     }
 
     private fun deleteDoc() {
@@ -766,7 +797,6 @@ class MainActivity : Activity() {
         editor.indentParagraphs = settings.indent
         editor.focusMode = settings.focus
         editor.scrollMode = settings.scrollMode
-        editor.candidatePosition = settings.candidatePosition
         editor.cornerQuotes = settings.cornerQuotes
         editor.autoSpace = settings.autoSpace
         if (vim.enabled != settings.vim) vim.enabled = settings.vim
@@ -809,9 +839,6 @@ class MainActivity : Activity() {
             }),
             SettingsPanel.Row("方括号键输入「」", { onOff(settings.cornerQuotes) }, { settings.cornerQuotes = !settings.cornerQuotes; applySettings() }, isToggle = true),
             SettingsPanel.Row("中英文间加空格", { onOff(settings.autoSpace) }, { settings.autoSpace = !settings.autoSpace; applySettings() }, isToggle = true),
-            SettingsPanel.Row("候选窗位置", { settings.candidatePosition.label }, { d ->
-                settings.candidatePosition = step(EditorView.CandidatePosition.entries, settings.candidatePosition, d); applySettings()
-            }),
             SettingsPanel.Row("段首缩进两字", { onOff(settings.indent) }, { settings.indent = !settings.indent; applySettings() }, isToggle = true),
             SettingsPanel.Row("页眉页脚", { onOff(settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true),
             SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true),
@@ -1038,7 +1065,8 @@ class MainActivity : Activity() {
                 syncing = false
                 r.onSuccess { res ->
                     syncPrefs.edit().putLong("lastSync", System.currentTimeMillis()).apply()
-                    syncStatus = "已同步 " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date())
+                    syncStatus = ""
+                    syncedAt = System.currentTimeMillis()
                     if (force || res.conflicts.isNotEmpty() || res.trashed > 0 || res.skipped.isNotEmpty()) toast("同步：${res.summary()}")
                     if (res.changedLocal) afterExternalChange()
                 }.onFailure {
@@ -1110,13 +1138,33 @@ class MainActivity : Activity() {
     private fun toggleVim() {
         settings.vim = !settings.vim
         applySettings()
-        toast(if (vim.enabled) "Vim 模式：开（Esc 进入 normal，光标变成方块）" else "Vim 模式：关")
+        toast(if (vim.enabled) "Vim 模式：开（Esc 进入普通模式，光标变成方块）" else "Vim 模式：关")
     }
 
     private fun toggleFocus() {
         settings.focus = !settings.focus
         applySettings()
         toast(if (settings.focus) "专注模式：只有光标所在的段落是黑色，Ctrl+Shift+F 关闭" else "已关闭专注模式")
+    }
+
+    /**
+     * 延迟测量：每个按键记一行日志（tag momoda-latency）：系统收到 → 交给墨墨打 → 文字或光标变化 → 画完 → 这一帧交给屏幕。
+     * 键盘本身（蓝牙、有线）和墨水屏刷新的时间在这之外，软件量不到。
+     */
+    private val frameListener = android.view.Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+        val t = editor.takeTiming() ?: return@OnFrameMetricsAvailableListener
+        val vsync = metrics.getMetric(android.view.FrameMetrics.INTENDED_VSYNC_TIMESTAMP) / 1_000_000
+        val done = vsync + metrics.getMetric(android.view.FrameMetrics.TOTAL_DURATION) / 1_000_000
+        val change = if (t.change > 0) t.change - t.arrive else -1
+        Log.i("momoda-latency", "key=${t.key} 系统→App=${t.arrive - t.event} App→变化=$change 变化→画完=${t.draw - maxOf(t.change, t.arrive)} " +
+            "画完→交屏=${done - t.draw} 合计=${done - t.event}")
+    }
+
+    private fun toggleMeasuring() {
+        editor.measuring = !editor.measuring
+        if (editor.measuring) window.addOnFrameMetricsAvailableListener(frameListener, handler)
+        else runCatching { window.removeOnFrameMetricsAvailableListener(frameListener) }
+        toast(if (editor.measuring) "延迟测量：开（结果在日志 momoda-latency）" else "延迟测量：关")
     }
 
     private fun toggleDebug() {
@@ -1139,7 +1187,7 @@ class MainActivity : Activity() {
         val vimMode = if (::vim.isInitialized && vim.enabled) {
             when (vim.mode) {
                 Vim.Mode.NORMAL -> "Vim · 普通"
-                Vim.Mode.INSERT -> "Vim · 输入"
+                Vim.Mode.INSERT -> "Vim · 插入"
                 Vim.Mode.VISUAL -> "Vim · 可视"
                 Vim.Mode.VISUAL_LINE -> "Vim · 可视行"
             }
@@ -1164,11 +1212,24 @@ class MainActivity : Activity() {
     /** 页眉右侧：同步、更新、存储授权这类提示，然后是时间。右下角已经有“⋯”，不在那里放文字。 */
     private fun refreshHeaderRight() {
         val notes = listOfNotNull(
-            syncStatus.ifEmpty { null },
+            syncStatus.ifEmpty { syncedLabel() },
             updates.latest?.let { "有新版本 ${it.version}" },
             if (store.isPublic) null else "未授权存储",
         )
-        headerClock.text = (notes + clockText).filter { it.isNotEmpty() }.joinToString("　")
+        headerClock.text = (notes + clockText).filter { it.isNotEmpty() }.joinToString(" · ")
+    }
+
+    /** 上次同步成功是多久以前（不写具体时刻，免得和页眉的时间混在一起）。按分钟随时钟刷新。 */
+    private fun syncedLabel(): String? {
+        val at = syncedAt.takeIf { it > 0 } ?: syncPrefs.getLong("lastSync", 0)
+        if (at == 0L) return null
+        val minutes = (System.currentTimeMillis() - at) / 60_000
+        return when {
+            minutes < 1 -> "刚刚同步"
+            minutes < 60 -> "$minutes 分钟前同步"
+            minutes < 24 * 60 -> "${minutes / 60} 小时前同步"
+            else -> "${minutes / (24 * 60)} 天前同步"
+        }
     }
 
     private fun refreshDebug() {

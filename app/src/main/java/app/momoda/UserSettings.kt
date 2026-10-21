@@ -55,11 +55,6 @@ class UserSettings(context: Context) {
         get() = prefs.getBoolean("autoSpace", true)
         set(v) = prefs.edit().putBoolean("autoSpace", v).apply()
 
-    /** 输入法候选窗的位置（见 [EditorView.CandidatePosition]）。 */
-    var candidatePosition: EditorView.CandidatePosition
-        get() = runCatching { EditorView.CandidatePosition.valueOf(prefs.getString("candidatePosition", null) ?: "") }.getOrDefault(EditorView.CandidatePosition.FOLLOW)
-        set(v) = prefs.edit().putString("candidatePosition", v.name).apply()
-
     var scrollMode: EditorView.ScrollMode
         get() = runCatching { EditorView.ScrollMode.valueOf(prefs.getString("scrollMode", null) ?: "") }.getOrDefault(EditorView.ScrollMode.CONTINUOUS)
         set(v) = prefs.edit().putString("scrollMode", v.name).apply()
