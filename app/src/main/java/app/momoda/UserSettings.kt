@@ -45,6 +45,16 @@ class UserSettings(context: Context) {
         set(v) = prefs.edit().putBoolean("vim", v).apply()
 
     /** 光标走到屏幕边缘时怎么翻：连续（一行一行）、半页、整页。 */
+    /** 中文引号样式（见 [TypingRules.QuoteStyle]），默认换成弯引号。 */
+    var quoteStyle: TypingRules.QuoteStyle
+        get() = runCatching { TypingRules.QuoteStyle.valueOf(prefs.getString("quoteStyle", null) ?: "") }.getOrDefault(TypingRules.QuoteStyle.CURLY)
+        set(v) = prefs.edit().putString("quoteStyle", v.name).apply()
+
+    /** 中英文之间自动加空格。 */
+    var autoSpace: Boolean
+        get() = prefs.getBoolean("autoSpace", true)
+        set(v) = prefs.edit().putBoolean("autoSpace", v).apply()
+
     /** 输入法候选窗的位置（见 [EditorView.CandidatePosition]）。 */
     var candidatePosition: EditorView.CandidatePosition
         get() = runCatching { EditorView.CandidatePosition.valueOf(prefs.getString("candidatePosition", null) ?: "") }.getOrDefault(EditorView.CandidatePosition.FOLLOW)

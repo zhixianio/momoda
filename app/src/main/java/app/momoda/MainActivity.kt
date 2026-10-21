@@ -767,6 +767,8 @@ class MainActivity : Activity() {
         editor.focusMode = settings.focus
         editor.scrollMode = settings.scrollMode
         editor.candidatePosition = settings.candidatePosition
+        editor.quoteStyle = settings.quoteStyle
+        editor.autoSpace = settings.autoSpace
         if (vim.enabled != settings.vim) vim.enabled = settings.vim
         val v = if (settings.chrome) View.VISIBLE else View.GONE
         header.visibility = v
@@ -805,6 +807,10 @@ class MainActivity : Activity() {
             SettingsPanel.Row("翻页方式", { settings.scrollMode.label }, { d ->
                 settings.scrollMode = step(EditorView.ScrollMode.entries, settings.scrollMode, d); applySettings()
             }),
+            SettingsPanel.Row("中文引号", { settings.quoteStyle.label }, { d ->
+                settings.quoteStyle = step(TypingRules.QuoteStyle.entries, settings.quoteStyle, d); applySettings()
+            }),
+            SettingsPanel.Row("中英文间加空格", { onOff(settings.autoSpace) }, { settings.autoSpace = !settings.autoSpace; applySettings() }, isToggle = true),
             SettingsPanel.Row("候选窗位置", { settings.candidatePosition.label }, { d ->
                 settings.candidatePosition = step(EditorView.CandidatePosition.entries, settings.candidatePosition, d); applySettings()
             }),

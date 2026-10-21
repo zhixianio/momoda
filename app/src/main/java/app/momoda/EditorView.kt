@@ -211,6 +211,9 @@ class EditorView(context: Context) : EditText(context) {
     private val rules = object : TextWatcher {
         private var deletedNewlineAt = -1
         private var insertedNewlineAt = -1
+        // 这次插入的文字（输入法上屏、粘贴等），用来套 [TypingRules]
+        private var insertedFrom = -1
+        private var insertedTo = -1
         private var applying = false
         // 本次编辑（含分段规则补充的编辑）影响到的范围，用来只重新渲染这几行
         private var dirtyFrom = Int.MAX_VALUE
@@ -222,6 +225,7 @@ class EditorView(context: Context) : EditText(context) {
 
         override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {
             insertedNewlineAt = if (before == 0 && count == 1 && s[start] == '\n') start else -1
+            if (!applying && count > 0) { insertedFrom = start; insertedTo = start + count } else if (!applying) insertedFrom = -1
             dirtyFrom = minOf(dirtyFrom, start)
             dirtyTo = maxOf(dirtyTo, start + count)
         }
@@ -243,7 +247,21 @@ class EditorView(context: Context) : EditText(context) {
                 s.replace(edit.start, edit.end, edit.text)
                 setSelection(edit.cursor.coerceIn(0, s.length))
                 applying = false
+            } else if (insertedFrom >= 0 && (quoteStyle != TypingRules.QuoteStyle.KEEP || autoSpace) &&
+                BaseInputConnection.getComposingSpanStart(s) < 0
+            ) {
+                // 拼音还在拼写（预编辑）时不动；上屏之后再整理引号和中英文之间的空格
+                val typed = TypingRules.afterInsert(s, insertedFrom, insertedTo.coerceAtMost(s.length), quoteStyle, autoSpace)
+                if (typed != null) {
+                    val cursorAtEnd = selectionStart == insertedTo
+                    applying = true
+                    s.replace(typed.start, typed.end, typed.text)
+                    if (cursorAtEnd) setSelection(typed.cursor.coerceIn(0, s.length))
+                    applying = false
+                    dirtyTo = maxOf(dirtyTo, typed.start + typed.text.length)
+                }
             }
+            insertedFrom = -1
             if (dirtyTo >= 0) {
                 // 往前多带一个字符：删掉换行后，上一行和这一行合成了一行
                 styler.restyle(s, (dirtyFrom - 1).coerceAtLeast(0), (dirtyTo + 1).coerceAtMost(s.length))
@@ -432,6 +450,10 @@ class EditorView(context: Context) : EditText(context) {
     }
 
     var scrollMode = ScrollMode.CONTINUOUS
+
+    /** 中文引号的样式和中英文之间自动加空格（见 [TypingRules]）。 */
+    var quoteStyle = TypingRules.QuoteStyle.KEEP
+    var autoSpace = false
 
     // ---------- 输入法候选窗的位置 ----------
 
