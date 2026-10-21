@@ -7,7 +7,8 @@
 - Ctrl+N 新建，Ctrl+O 切换文档
 - Ctrl+. Zen 模式（隐藏页眉页脚），Ctrl+Shift+F 专注模式（只突出当前段落）
 - Ctrl+Shift+V Vim 模式：Esc 普通模式，hjkl 移动，dw、dd、yy、p 等照常用，i 输入
-- 想把 CapsLock 当 Ctrl：Ctrl+K 选“系统设置 · 实体键盘”，给键盘选布局“墨墨打：CapsLock 当 Ctrl”
+- 想把 CapsLock 当 Ctrl：Ctrl+K 选“CapsLock 映射”，按说明在系统里选一次布局
+- Ctrl+/ 帮助：全部快捷键
 
 ## 写作
 

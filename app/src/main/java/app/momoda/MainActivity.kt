@@ -591,6 +591,7 @@ class MainActivity : Activity() {
             keyCode == KeyEvent.KEYCODE_COMMA -> { showSettings(); "设置" }
             keyCode == KeyEvent.KEYCODE_L && shift -> { toggleMeasuring(); "延迟测量" }
             keyCode == KeyEvent.KEYCODE_K && shift -> { toggleSoftKeyboard(); "软键盘" }
+            keyCode == KeyEvent.KEYCODE_SLASH -> { showHelp(); "帮助" }
             keyCode == KeyEvent.KEYCODE_J && !shift -> { showAi(); "AI" }
             keyCode == KeyEvent.KEYCODE_EQUALS || keyCode == KeyEvent.KEYCODE_PLUS -> { changeTextSize(+1f); "字号+" }
             keyCode == KeyEvent.KEYCODE_MINUS -> { changeTextSize(-1f); "字号-" }
@@ -629,35 +630,28 @@ class MainActivity : Activity() {
     private fun commands(): List<Command> = buildList {
         var group = ""
         fun add(c: Command) { c.group = group; this.add(c) }
-        // 和设置项重复的开关（Zen、专注、Vim、字号）不放在这里：键盘用快捷键，笔在设置里点，设置页标着快捷键
+        fun state(on: Boolean) = if (on) "开" else "关"
         group = "文档"
         add(Command("new", "新建文档", "Ctrl+N", ::newDoc))
         add(Command("switch", "打开文档", "Ctrl+O", ::showSwitcher))
-        add(Command("previous", "切回上一篇", "Ctrl+Tab", ::switchToPrevious))
-        add(Command("rename", "修改标题", "", ::renameTitle))
         add(Command("manage", "管理文档", "回收站、排序", ::showManager))
         add(Command("trash", "删除当前文档", "进回收站", ::deleteDoc))
-        group = "同步与 AI"
-        add(Command("sync", "立即同步", "Ctrl+Shift+S", { syncNow(force = true) }))
-        add(Command("sync-settings", "同步设置", if (sync.configured) sync.repo else "GitHub 登录、选仓库", ::showSyncConfig))
+        group = "写作"
+        add(Command("zen", "Zen 模式", "Ctrl+. · ${state(!settings.chrome)}", ::toggleZen))
+        add(Command("focus", "专注模式", "Ctrl+Shift+F · ${state(settings.focus)}", ::toggleFocus))
+        add(Command("vim", "Vim 模式", "Ctrl+Shift+V · ${state(settings.vim)}", ::toggleVim))
         add(Command("ai", "AI 助手", "Ctrl+J", ::showAi))
-        add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "接口、模型、指令", ::showAiConfig))
+        group = "同步"
+        add(Command("sync", "立即同步", "Ctrl+Shift+S", { syncNow(force = true) }))
+        add(Command("sync-settings", "同步设置", if (sync.configured) sync.repo.substringAfter('/') else "GitHub 登录", ::showSyncConfig))
         add(Command("paste", "从其他设备粘贴", "手机或电脑上填写", ::showPaste))
-        group = "系统"
+        group = "其他"
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
-        add(Command("soft-keyboard", "软键盘", "Ctrl+Shift+K", ::toggleSoftKeyboard))
+        add(Command("capslock", "CapsLock 映射", "改成 Ctrl", ::showCapsLockGuide))
+        add(Command("help", "帮助", "Ctrl+/ · 快捷键、诊断", ::showHelp))
         if (!store.isPublic) add(Command("access", "授权存储", "存到 Documents/momoda", ::requestStorageAccess))
-        val latest = updates.latest
-        if (latest != null) add(Command("install-update", "安装 ${latest.version}", "从 GitHub 下载") { installUpdate(latest) })
-        else add(Command("check-update", "检查更新", if (updates.configured) "" else "尚未配置发布地址") { checkForUpdates(force = true) })
-        add(Command("ime-settings", "输入法设置", "候选窗、预编辑", ::openImeSettings))
-        // 把 CapsLock 改成 Ctrl：在这里给键盘选用墨墨打提供的布局（res/xml/keyboard_layouts.xml）。
-        // App 自己拦 CapsLock 拦不住大写锁定（系统先切换了才交给 App），所以只走系统布局这一条路
-        add(Command("hardkeyboard", "实体键盘布局", "CapsLock 当 Ctrl") {
-            openSystemSettings(Settings.ACTION_HARD_KEYBOARD_SETTINGS, "Settings\$PhysicalKeyboardActivity")
-        })
-        add(Command("diagnostics", "导出诊断信息", "不含文档内容", ::exportDiagnostics))
-        // 调试面板（按键记录、刷新耗时）不放进命令面板，排查问题时用 Ctrl+Shift+D 打开
+        updates.latest?.let { r -> add(Command("install-update", "安装 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
+        // 软键盘（Ctrl+Shift+K）、调试面板（Ctrl+Shift+D）、延迟测量（Ctrl+Shift+L）只留快捷键，见帮助
     }
 
     /** 命令面板：最近用过的排在前面（DESIGN §3.2）。 */
@@ -666,16 +660,29 @@ class MainActivity : Activity() {
         val byId = cmds.associateBy { it.id }
         val groups = cmds.groupBy { it.group }.map { (g, list) -> g to list.map { it.id } }
         val uses = PaletteLayout.parseUses(ui.getString("commandUses", "")!!)
-        val columns = PaletteLayout.columns(groups, uses, neverFrequent = setOf("trash")).map { (title, ids) ->
-            title to ids.map { id -> byId.getValue(id).let { CommandGrid.Item(it.id, it.label, it.shortcut) } }
-        }
-        CommandGrid.show(this, columns, font, onDismiss = ::returnToEditor) { item ->
+        fun item(id: String) = byId.getValue(id).let { CommandGrid.Item(it.id, it.label, it.shortcut) }
+        val all = PaletteLayout.columns(groups, uses, neverFrequent = setOf("trash"))
+        val frequent = all.firstOrNull { it.first == PaletteLayout.FREQUENT }?.second.orEmpty().map(::item)
+        val columns = all.filter { it.first != PaletteLayout.FREQUENT }.map { (title, ids) -> title to ids.map(::item) }
+        CommandGrid.show(this, columns, frequent, font, onDismiss = ::returnToEditor) { item ->
             ui.edit().putString("commandUses", PaletteLayout.formatUses(uses + (item.id to (uses[item.id] ?: 0) + 1))).apply()
             byId.getValue(item.id).run()
         }
     }
 
     /** 有些墨水屏厂商的定制设置里藏掉了这些页面，直接拉起系统原生设置。 */
+    private fun showHelp() {
+        save()
+        HelpPanel(this, font, versionName, onExportDiagnostics = ::exportDiagnostics, onImeSettings = ::openImeSettings,
+            onDismiss = ::returnToEditor).show()
+    }
+
+    private fun showCapsLockGuide() {
+        CapsLockGuide(this, font, onOpenSystem = {
+            openSystemSettings(Settings.ACTION_HARD_KEYBOARD_SETTINGS, "Settings\$PhysicalKeyboardActivity")
+        }, onDismiss = ::returnToEditor).show()
+    }
+
     /** 打开当前输入法自己的设置页（fcitx5 的候选窗大小、预编辑等都在那里）；找不到就打开系统的输入法设置。 */
     private fun openImeSettings() {
         val imm = getSystemService(InputMethodManager::class.java)
@@ -833,6 +840,10 @@ class MainActivity : Activity() {
             SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true, hint = "只突出当前段落 · Ctrl+Shift+F"),
             SettingsPanel.Row("Vim 模式", { onOff(settings.vim) }, { settings.vim = !settings.vim; applySettings() }, isToggle = true, hint = "Ctrl+Shift+V"),
             SettingsPanel.Row("自动检查更新", { onOff(settings.autoUpdate) }, { settings.autoUpdate = !settings.autoUpdate }, isToggle = true),
+            SettingsPanel.Row("检查更新", { updates.latest?.let { "安装 ${it.version}" } ?: "当前 $versionName" }, {
+                val r = updates.latest
+                if (r != null) installUpdate(r) else checkForUpdates(force = true)
+            }, isToggle = true, hint = "按 Enter 或点这里"),
         )
         val version = packageManager.getPackageInfo(packageName, 0).versionName
         val footnote = buildString {
@@ -884,7 +895,6 @@ class MainActivity : Activity() {
         }
         save()
         val prompts = Prompts.parse(promptsFile().readText())
-        if (prompts.isEmpty()) { toast("prompts.md 里没有指令，用“## 名称”开头写一条"); editPrompts(); return }
 
         val t = editor.text
         val selStart = minOf(editor.selectionStart, editor.selectionEnd).coerceAtLeast(0)
@@ -900,8 +910,12 @@ class MainActivity : Activity() {
         val target = t.subSequence(start, end).toString()
         val context = t.subSequence((selEnd - 2000).coerceAtLeast(0), selEnd).toString()
 
-        val items = prompts.map { InkItem(it.name, if (it.insert) "插入" else "替换") }
+        // 指令列表最后是“AI 设置…”“编辑指令…”：AI 只有这一个入口
+        val items = prompts.map { InkItem(it.name, if (it.insert) "插入" else "替换") } +
+            InkItem("AI 设置…", llm.model) + InkItem("编辑指令…", Prompts.FILE_NAME)
         InkList.show(this, "AI · ${llm.model}", items, font, onDismiss = ::returnToEditor) { i ->
+            if (i == prompts.size) { handler.post { showAiConfig() }; return@show }
+            if (i == prompts.size + 1) { editPrompts(); return@show }
             val p = prompts[i]
             if (target.isBlank() && !p.insert) { toast("光标所在段落是空的，先选中要处理的文字"); return@show }
             val user = Prompts.render(p, target, context)
@@ -1200,12 +1214,22 @@ class MainActivity : Activity() {
 
     /** 页眉右侧：同步、更新、存储授权这类提示，然后是时间。右下角已经有“⋯”，不在那里放文字。 */
     private fun refreshHeaderRight() {
-        val notes = listOfNotNull(
+        val update = updates.latest?.let { "有新版本 ${it.version}" }
+        val parts = listOfNotNull(
             syncStatus.ifEmpty { syncedLabel() },
-            updates.latest?.let { "有新版本 ${it.version}" },
+            update,
             if (store.isPublic) null else "未授权存储",
+            clockText.ifEmpty { null },
         )
-        headerClock.text = (notes + clockText).filter { it.isNotEmpty() }.joinToString(" · ")
+        // 有新版本时用黑字，在浅灰的页眉里一眼能看到；其余照常浅灰
+        val text = android.text.SpannableStringBuilder()
+        parts.forEachIndexed { i, part ->
+            if (i > 0) text.append(" · ")
+            val from = text.length
+            text.append(part)
+            if (part == update) text.setSpan(android.text.style.ForegroundColorSpan(Color.BLACK), from, text.length, 0)
+        }
+        headerClock.text = text
     }
 
     /** 上次同步成功是多久以前（不写具体时刻，免得和页眉的时间混在一起）。按分钟随时钟刷新。 */

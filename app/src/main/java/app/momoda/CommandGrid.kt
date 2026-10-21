@@ -21,7 +21,7 @@ import kotlin.math.min
 
 /**
  * 命令面板：按分组排成多列，一屏放下全部命令，不用滚动（墨水屏上滚动又慢又闪）。
- * 每格写命令名，下面小字是快捷键（没有快捷键时是补充说明）。
+ * 每格写命令名，下面小字是快捷键（没有快捷键时是补充说明）。搜索框右边是“常用”的几个按钮。
  * - 键盘：方向键在格子之间移动，Tab 依次往后，Enter 执行，Esc 关闭；直接打字筛选（支持拼音首字母），
  *   有筛选词时改成一列结果。
  * - 笔：点格子。
@@ -34,6 +34,8 @@ object CommandGrid {
     fun show(
         context: Context,
         columns: List<Pair<String, List<Item>>>,
+        /** 用得最多的几条，排在搜索框右边；打开面板时默认选中第一个。 */
+        frequent: List<Item>,
         typeface: Typeface?,
         onDismiss: () -> Unit,
         onPick: (Item) -> Unit,
@@ -44,16 +46,18 @@ object CommandGrid {
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         val frame = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(px(2), Color.BLACK) }
 
-        // 搜索时不重复：“常用”里的项在后面的分组里都有
-        val all = columns.filter { it.first != PaletteLayout.FREQUENT }.flatMap { it.second }
+        val all = columns.flatMap { it.second }
         var shown: List<List<Item>> = columns.map { it.second }
         var titles: List<String> = columns.map { it.first }
+        var searching = false
+        // row == -1 是搜索框右边的“常用”按钮，col 是第几个
         var col = 0
-        var row = 0
+        var row = if (frequent.isNotEmpty()) -1 else 0
         val cells = mutableListOf<MutableList<View>>()
+        val frequentViews = mutableListOf<View>()
 
         fun pick(): Boolean {
-            val item = shown.getOrNull(col)?.getOrNull(row) ?: return true
+            val item = (if (row == -1) frequent.getOrNull(col) else shown.getOrNull(col)?.getOrNull(row)) ?: return true
             dialog.dismiss()
             onPick(item)
             return true
@@ -61,8 +65,11 @@ object CommandGrid {
 
         val body = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
 
+        val frequentBox = GradientDrawable().apply { setColor(Color.WHITE); setStroke(1, Color.rgb(0x99, 0x99, 0x99)) }
+
         fun highlight() {
             cells.forEachIndexed { c, list -> list.forEachIndexed { r, v -> v.background = if (c == col && r == row) frame else null } }
+            frequentViews.forEachIndexed { i, v -> v.background = if (row == -1 && i == col) frame else frequentBox }
         }
 
         fun cell(item: Item, c: Int, r: Int, wide: Boolean) = LinearLayout(context).apply {
@@ -123,14 +130,20 @@ object CommandGrid {
         }
 
         fun moveTo(dCol: Int, dRow: Int) {
-            val (c, r) = PaletteLayout.move(shown.map { it.size }, col, row, dCol, dRow)
-            col = c; row = r
+            val hasFrequent = frequent.isNotEmpty() && !searching
+            when {
+                row == -1 && dRow > 0 -> { row = 0; col = col.coerceAtMost(shown.size - 1) }
+                row == -1 -> col = (col + dCol).coerceIn(0, frequent.size - 1)
+                row == 0 && dRow < 0 && hasFrequent -> { row = -1; col = col.coerceAtMost(frequent.size - 1) }
+                else -> { val (c, r) = PaletteLayout.move(shown.map { it.size }, col, row, dCol, dRow); col = c; row = r }
+            }
             highlight()
         }
 
         fun next(delta: Int) {
-            // Tab：按列依次往后（到列尾进下一列）
-            val flat = shown.flatMapIndexed { c, items -> items.indices.map { c to it } }
+            // Tab：先“常用”，再按列依次往后（到列尾进下一列）
+            val head = if (searching) emptyList() else frequent.indices.map { it to -1 }
+            val flat = head + shown.flatMapIndexed { c, items -> items.indices.map { c to it } }
             if (flat.isEmpty()) return
             val i = flat.indexOf(col to row).coerceAtLeast(0)
             val (c, r) = flat[(i + delta).mod(flat.size)]
@@ -161,14 +174,16 @@ object CommandGrid {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
                 override fun afterTextChanged(s: Editable) {
-                    if (s.isBlank()) {
+                    searching = s.isNotBlank()
+                    if (!searching) {
                         shown = columns.map { it.second }
                         titles = columns.map { it.first }
                     } else {
                         shown = listOf(Pinyin.matcher.filter(s.toString(), all) { "${it.label} ${it.hint}" })
                         titles = listOf("")
                     }
-                    col = 0; row = 0
+                    col = 0
+                    row = if (!searching && frequent.isNotEmpty()) -1 else 0
                     render()
                 }
             })
@@ -185,7 +200,30 @@ object CommandGrid {
                 this.typeface = typeface
                 setPadding(px(20), px(16), px(20), px(8))
             })
-            addView(search, LinearLayout.LayoutParams(-1, -2).apply { setMargins(px(18), px(4), px(18), px(10)) })
+            // 搜索框和“常用”按钮在同一行
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(search, LinearLayout.LayoutParams(0, -2, 1f))
+                frequent.forEachIndexed { i, item ->
+                    val v = LinearLayout(context).apply {
+                        orientation = LinearLayout.VERTICAL
+                        gravity = Gravity.CENTER
+                        setPadding(px(14), 0, px(14), 0)
+                        addView(TextView(context).apply {
+                            text = item.label
+                            setTextColor(Color.BLACK)
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                            this.typeface = typeface
+                            maxLines = 1
+                        })
+                        // 和搜索框一样高，只放得下命令名；快捷键在下面的分组里写着
+                        setOnClickListener { row = -1; col = i; pick() }
+                    }
+                    frequentViews += v
+                    addView(v, LinearLayout.LayoutParams(-2, -1).apply { marginStart = px(8) })
+                }
+            }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(px(18), px(4), px(18), px(10)) })
             addView(body, LinearLayout.LayoutParams(-1, -2).apply { setMargins(px(6), 0, px(6), 0) })
         }
 
