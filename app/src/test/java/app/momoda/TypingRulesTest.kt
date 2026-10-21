@@ -1,16 +1,15 @@
 package app.momoda
 
-import app.momoda.TypingRules.QuoteStyle
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class TypingRulesTest {
 
     /** 在 | 处插入 [typed]，套用规则，返回结果（| 标出光标）。 */
-    private fun type(before: String, typed: String, quotes: QuoteStyle = QuoteStyle.CURLY, autoSpace: Boolean = true): String {
+    private fun type(before: String, typed: String, cornerQuotes: Boolean = true, autoSpace: Boolean = true): String {
         val at = before.indexOf('|')
         val t = StringBuilder(before.replace("|", "")).insert(at, typed)
-        val edit = TypingRules.afterInsert(t, at, at + typed.length, quotes, autoSpace)
+        val edit = TypingRules.afterInsert(t, at, at + typed.length, cornerQuotes, autoSpace)
             ?: return t.insert(at + typed.length, "|").toString()
         t.replace(edit.start, edit.end, edit.text)
         return t.insert(edit.cursor, "|").toString()
@@ -36,23 +35,19 @@ class TypingRulesTest {
 
     @Test fun spacingOff() = assertEquals("用M|", type("用|", "M", autoSpace = false))
 
-    @Test fun straightQuoteOpensInChinese() = assertEquals("他说“|", type("他说|", "\""))
+    @Test fun imeBracketsBecomeCornerQuotes() = assertEquals("他说「|", type("他说|", "【"))
 
-    @Test fun straightQuoteClosesAfterOpen() = assertEquals("他说“好”|", type("他说“好|", "\""))
+    @Test fun imeClosingBracket() = assertEquals("他说「好」|", type("他说「好|", "】"))
 
-    @Test fun cornerStyle() = assertEquals("他说「好」|", type("他说「好|", "\"", QuoteStyle.CORNER))
+    @Test fun bracesInChineseBecomeDoubleCorner() = assertEquals("「他说『|", type("「他说|", "{"))
 
-    @Test fun imeQuoteMappedToCorner() = assertEquals("他说「|", type("他说|", "“", QuoteStyle.CORNER))
+    @Test fun closingBraceInChinese() = assertEquals("他说『好』|", type("他说『好|", "}"))
 
-    @Test fun singleQuotesNested() = assertEquals("“他说‘|", type("“他说|", "'"))
+    @Test fun asciiBracketsUntouchedForMarkdownLinks() = assertEquals("见[|", type("见|", "["))
 
-    @Test fun englishQuoteUntouched() = assertEquals("say \"|", type("say |", "\""))
+    @Test fun bracesInEnglishUntouched() = assertEquals("map {|", type("map |", "{"))
 
-    @Test fun apostropheInEnglishUntouched() = assertEquals("it'|", type("it|", "'"))
+    @Test fun curlyQuotesFromImeUntouched() = assertEquals("他说“|", type("他说|", "“"))
 
-    @Test fun quoteAtParagraphStartOpens() = assertEquals("甲\n\n“|", type("甲\n\n|", "\""))
-
-    @Test fun quotesKeep() = assertEquals("他说\"|", type("他说|", "\"", QuoteStyle.KEEP, autoSpace = false))
-
-    @Test fun pairingResetsPerParagraph() = assertEquals("“甲\n\n“|", type("“甲\n\n|", "\""))
+    @Test fun cornerQuotesOff() = assertEquals("他说【|", type("他说|", "【", cornerQuotes = false))
 }

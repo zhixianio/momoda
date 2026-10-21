@@ -45,10 +45,10 @@ class UserSettings(context: Context) {
         set(v) = prefs.edit().putBoolean("vim", v).apply()
 
     /** 光标走到屏幕边缘时怎么翻：连续（一行一行）、半页、整页。 */
-    /** 中文引号样式（见 [TypingRules.QuoteStyle]），默认换成弯引号。 */
-    var quoteStyle: TypingRules.QuoteStyle
-        get() = runCatching { TypingRules.QuoteStyle.valueOf(prefs.getString("quoteStyle", null) ?: "") }.getOrDefault(TypingRules.QuoteStyle.CURLY)
-        set(v) = prefs.edit().putString("quoteStyle", v.name).apply()
+    /** 方括号键输入直角引号「」『』（像 macOS 的中文输入法）。 */
+    var cornerQuotes: Boolean
+        get() = prefs.getBoolean("cornerQuotes", true)
+        set(v) = prefs.edit().putBoolean("cornerQuotes", v).apply()
 
     /** 中英文之间自动加空格。 */
     var autoSpace: Boolean

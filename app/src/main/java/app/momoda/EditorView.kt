@@ -9,6 +9,7 @@ import android.graphics.text.LineBreakConfig
 import android.os.Build
 import android.os.SystemClock
 import android.text.Editable
+import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.view.inputmethod.BaseInputConnection
 import android.text.InputType
@@ -173,6 +174,8 @@ class EditorView(context: Context) : EditText(context) {
         rulesEnabled = false
         setText(styled)
         rulesEnabled = true
+        pendingFrom = -1
+        text?.let { it.setSpan(composingWatcher, 0, it.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE) }
         focusShown = false
         updateFocus()
     }
@@ -208,6 +211,40 @@ class EditorView(context: Context) : EditText(context) {
 
     private var softBreakPending = false
 
+    // 等预编辑结束再整理的那一段（见 rules 里的说明）
+    private var pendingFrom = -1
+    private var pendingTo = -1
+    private var pendingText = ""
+    /** 正在由我们自己改文字（整理引号、空格），这时的改动不再触发整理。 */
+    private var typingApplying = false
+
+    /** 对 [from, to) 套用 [TypingRules]：方括号键输入「」、中英文之间加空格。 */
+    private fun applyTyping(s: Editable, from: Int, to: Int) {
+        val typed = TypingRules.afterInsert(s, from, to.coerceAtMost(s.length), cornerQuotes, autoSpace) ?: return
+        val cursorAtEnd = selectionStart == to
+        typingApplying = true
+        s.replace(typed.start, typed.end, typed.text)
+        if (cursorAtEnd) setSelection(typed.cursor.coerceIn(0, s.length))
+        typingApplying = false
+    }
+
+    /** 输入法去掉预编辑标记时（文字不变，只是结束拼写），整理刚才那一段。 */
+    private val composingWatcher = object : android.text.SpanWatcher {
+        override fun onSpanAdded(text: Spannable, what: Any, start: Int, end: Int) = Unit
+        override fun onSpanChanged(text: Spannable, what: Any, ostart: Int, oend: Int, nstart: Int, nend: Int) = Unit
+        override fun onSpanRemoved(text: Spannable, what: Any, start: Int, end: Int) {
+            if (pendingFrom < 0) return
+            post {
+                val t = this@EditorView.text ?: return@post
+                val from = pendingFrom
+                val to = pendingTo
+                if (from < 0 || BaseInputConnection.getComposingSpanStart(t) >= 0) return@post
+                pendingFrom = -1
+                if (to <= t.length && t.subSequence(from, to).toString() == pendingText) applyTyping(t, from, to)
+            }
+        }
+    }
+
     private val rules = object : TextWatcher {
         private var deletedNewlineAt = -1
         private var insertedNewlineAt = -1
@@ -225,7 +262,13 @@ class EditorView(context: Context) : EditText(context) {
 
         override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {
             insertedNewlineAt = if (before == 0 && count == 1 && s[start] == '\n') start else -1
-            if (!applying && count > 0) { insertedFrom = start; insertedTo = start + count } else if (!applying) insertedFrom = -1
+            if (!applying && !typingApplying && count > 0) { insertedFrom = start; insertedTo = start + count }
+            else if (!applying && !typingApplying) insertedFrom = -1
+            // 还在等预编辑结束的那段：改动和它重叠就作废，改动在它前面就跟着平移
+            if (pendingFrom >= 0) {
+                if (start < pendingTo && start + before > pendingFrom) pendingFrom = -1
+                else if (start <= pendingFrom) { pendingFrom += count - before; pendingTo += count - before }
+            }
             dirtyFrom = minOf(dirtyFrom, start)
             dirtyTo = maxOf(dirtyTo, start + count)
         }
@@ -234,6 +277,13 @@ class EditorView(context: Context) : EditText(context) {
             browsing = false
             if (dirtyTo >= 0) stripForeignStyles(s, dirtyFrom.coerceIn(0, s.length), dirtyTo.coerceIn(0, s.length))
             if (applying) return
+            if (typingApplying) {
+                // 我们自己整理引号、空格时的改动：只重新渲染，不再套规则
+                if (dirtyTo >= 0) styler.restyle(s, (dirtyFrom - 1).coerceAtLeast(0), (dirtyTo + 1).coerceAtMost(s.length))
+                dirtyFrom = Int.MAX_VALUE
+                dirtyTo = -1
+                return
+            }
             if (!rulesEnabled) { dirtyFrom = Int.MAX_VALUE; dirtyTo = -1; return }
             val soft = softBreakPending
             softBreakPending = false
@@ -247,18 +297,15 @@ class EditorView(context: Context) : EditText(context) {
                 s.replace(edit.start, edit.end, edit.text)
                 setSelection(edit.cursor.coerceIn(0, s.length))
                 applying = false
-            } else if (insertedFrom >= 0 && (quoteStyle != TypingRules.QuoteStyle.KEEP || autoSpace) &&
-                BaseInputConnection.getComposingSpanStart(s) < 0
-            ) {
-                // 拼音还在拼写（预编辑）时不动；上屏之后再整理引号和中英文之间的空格
-                val typed = TypingRules.afterInsert(s, insertedFrom, insertedTo.coerceAtMost(s.length), quoteStyle, autoSpace)
-                if (typed != null) {
-                    val cursorAtEnd = selectionStart == insertedTo
-                    applying = true
-                    s.replace(typed.start, typed.end, typed.text)
-                    if (cursorAtEnd) setSelection(typed.cursor.coerceIn(0, s.length))
-                    applying = false
-                    dirtyTo = maxOf(dirtyTo, typed.start + typed.text.length)
+            } else if (insertedFrom >= 0 && (cornerQuotes || autoSpace)) {
+                if (BaseInputConnection.getComposingSpanStart(s) >= 0) {
+                    // 拼写中（预编辑）先不动，记下来：输入法结束预编辑时（见 [composingWatcher]）再整理。
+                    // fcitx 的中文标点（例如 [ 打出的【）就是先作为预编辑放进来，之后只去掉预编辑标记、文字不再变
+                    pendingFrom = insertedFrom
+                    pendingTo = insertedTo
+                    pendingText = s.subSequence(insertedFrom, insertedTo.coerceAtMost(s.length)).toString()
+                } else {
+                    applyTyping(s, insertedFrom, insertedTo)
                 }
             }
             insertedFrom = -1
@@ -451,8 +498,8 @@ class EditorView(context: Context) : EditText(context) {
 
     var scrollMode = ScrollMode.CONTINUOUS
 
-    /** 中文引号的样式和中英文之间自动加空格（见 [TypingRules]）。 */
-    var quoteStyle = TypingRules.QuoteStyle.KEEP
+    /** 方括号键输入直角引号、中英文之间自动加空格（见 [TypingRules]）。 */
+    var cornerQuotes = false
     var autoSpace = false
 
     // ---------- 输入法候选窗的位置 ----------
