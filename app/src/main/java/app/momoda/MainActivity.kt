@@ -130,7 +130,9 @@ class MainActivity : Activity() {
 
         buildLayout()
 
-        vim = Vim(editor) { refreshChrome() }
+        vim = Vim(editor, onModeChange = { refreshChrome() },
+            prompt = { title, onDone -> InkList.prompt(this, title, "", font, onDismiss = ::returnToEditor, onDone = onDone) },
+            toast = ::toast)
         applySettings()
 
         editor.preImeKeyHandler = ::onKeyPreIme
@@ -1077,7 +1079,12 @@ class MainActivity : Activity() {
         }
         footer.text = "$words 字 · $state"
         val vimMode = if (::vim.isInitialized && vim.enabled) {
-            if (vim.mode == Vim.Mode.NORMAL) "Vim · 普通" else "Vim · 输入"
+            when (vim.mode) {
+                Vim.Mode.NORMAL -> "Vim · 普通"
+                Vim.Mode.INSERT -> "Vim · 输入"
+                Vim.Mode.VISUAL -> "Vim · 可视"
+                Vim.Mode.VISUAL_LINE -> "Vim · 可视行"
+            }
         } else null
         footerMode.text = listOfNotNull(vimMode, if (capsLockOn) "大写锁定" else null).joinToString("　")
         footerNotes.text = listOfNotNull(

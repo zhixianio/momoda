@@ -104,6 +104,23 @@ object VimText {
         return Range(from, end.coerceAtLeast(from))
     }
 
+    /** [i] 是不是段距空行（紧跟文字行后的第一个空行，见 EditorView.BlankLineSpacing）的开头。 */
+    fun isGapLineStart(t: CharSequence, i: Int): Boolean =
+        i in 2 until t.length && t[i] == '\n' && t[i - 1] == '\n' && t[i - 2] != '\n'
+
+    /** 从 [from] 往后（不含 [from]）或往前找 [q]，忽略大小写，找到头就从另一头接着找；找不到返回 -1。 */
+    fun find(t: CharSequence, q: String, from: Int, forward: Boolean): Int {
+        val s = t.toString()
+        if (q.isEmpty() || s.isEmpty()) return -1
+        return if (forward) {
+            s.indexOf(q, (from + 1).coerceAtMost(s.length), ignoreCase = true).takeIf { it >= 0 }
+                ?: s.indexOf(q, 0, ignoreCase = true)
+        } else {
+            (if (from > 0) s.lastIndexOf(q, from - 1, ignoreCase = true) else -1).takeIf { it >= 0 }
+                ?: s.lastIndexOf(q, s.length, ignoreCase = true)
+        }
+    }
+
     /** 最后一段（有字的那段）的开头。 */
     fun lastLineStart(t: CharSequence): Int {
         var i = t.length

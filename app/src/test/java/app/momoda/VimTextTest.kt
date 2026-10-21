@@ -70,6 +70,25 @@ class VimTextTest {
 
     @Test fun lastLineIgnoresTrailingNewline() = assertEquals(3, VimText.lastLineStart("甲\n\n乙\n"))
 
+    @Test fun findForwardWraps() {
+        val t = "Jarvis 来了，jarvis 走了"
+        assertEquals(10, VimText.find(t, "jarvis", 0, forward = true))
+        assertEquals(0, VimText.find(t, "jarvis", 10, forward = true))
+    }
+
+    @Test fun findBackwardWraps() {
+        val t = "甲 乙 甲 乙"
+        assertEquals(0, VimText.find(t, "甲", 4, forward = false))
+        assertEquals(4, VimText.find(t, "甲", 0, forward = false))
+    }
+
+    @Test fun findMissing() = assertEquals(-1, VimText.find("甲乙", "丙", 0, forward = true))
+
+    @Test fun gapLineStart() {
+        val t = "甲\n\n\n乙"
+        assertEquals(listOf(2), t.indices.filter { VimText.isGapLineStart(t, it) })
+    }
+
     @Test fun pasteLinesAfterAddsSeparator() {
         val t = "甲\n\n丙"
         val (at, text, cursor) = VimText.pasteLinesAfter(t, 0, "乙")
