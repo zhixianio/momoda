@@ -1,13 +1,12 @@
 package app.momoda
 
-import android.icu.text.BreakIterator
 import android.view.KeyEvent
 import android.view.inputmethod.InputMethodManager
-import java.util.Locale
 
 /**
- * M0 的 vim 最小实现：验证 normal 模式能在输入法之前截获按键。
- * 支持 hjkl w b 0 $ gg G x dd u Ctrl+R i a A I o O，Esc 回到 normal（对任何输入法都立即生效）。
+ * Vim 模式：normal 模式在输入法之前截获按键，Esc 回到 normal（对任何输入法都立即生效）。
+ * 支持数字前缀；移动 hjkl w b e 0 $ gg G；操作符 d c y 接动作或 iw aw，dd cc yy D C Y；x X s p P u Ctrl+R；
+ * 进入输入 i a A I o O。只和文字有关的逻辑在 [VimText]。
  * j/k/0/$ 按屏幕上的视觉行移动（相当于 vim 的 gj/gk），更适合不分行的散文。
  */
 class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Unit) {
@@ -23,9 +22,6 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
     var mode = Mode.INSERT
         private set
 
-    private var pending: Char? = null
-    // ICU 的中文分词要加载词典，第一次创建可能很慢：等第一次按 w/b 时再创建
-    private val words by lazy { BreakIterator.getWordInstance(Locale.CHINA) }
     private val imm = editor.context.getSystemService(InputMethodManager::class.java)
 
     /** 返回 true 表示按键已被消费，不再交给输入法和编辑器。 */
@@ -45,7 +41,8 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
         }
         // NORMAL：吞掉所有按键（Ctrl 组合键已经在上游处理过）。
         // 例外是 Esc 的抬起，它的按下刚交给了输入法，抬起也给它，保持成对。
-        if (keyCode == KeyEvent.KEYCODE_ESCAPE) return event.action == KeyEvent.ACTION_DOWN
+        // Esc 在 normal 模式下取消输了一半的命令（d、数字前缀等）
+        if (keyCode == KeyEvent.KEYCODE_ESCAPE) { if (event.action == KeyEvent.ACTION_DOWN) reset(); return event.action == KeyEvent.ACTION_DOWN }
         if (event.action != KeyEvent.ACTION_DOWN) return true
         if (event.isCtrlPressed && keyCode == KeyEvent.KEYCODE_R) {
             editor.onKeyShortcut(KeyEvent.KEYCODE_Z, ctrlShift(event, KeyEvent.KEYCODE_Z))
@@ -53,39 +50,156 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
         }
         // 忽略大写锁定：不小心开了 CapsLock，hjkl 会变成 HJKL，整个 normal 模式就像失灵了。大写命令照常用 Shift
         val ch = event.getUnicodeChar(event.metaState and KeyEvent.META_CAPS_LOCK_ON.inv()).toChar()
-        val p = pending
-        pending = null
-        when {
-            p == 'g' && ch == 'g' -> move(0)
-            p == 'd' && ch == 'd' -> deleteParagraph()
-            ch == 'g' || ch == 'd' -> pending = ch
-            ch == 'h' -> moveChar(-1)
-            ch == 'l' -> moveChar(+1)
-            ch == 'j' -> moveLine(+1)
-            ch == 'k' -> moveLine(-1)
-            ch == 'w' -> move(nextWord(cursor))
-            ch == 'b' -> move(prevWord(cursor))
-            ch == '0' -> layout?.let { move(it.getLineStart(it.getLineForOffset(cursor))) }
-            ch == '$' -> layout?.let { move(lineEndExclusiveNewline(it.getLineForOffset(cursor))) }
-            ch == 'G' -> move(text.length)
-            // 和 vim 一样，x 不删换行：否则在空行上按 x 会把上下两段并成一段
-            ch == 'x' -> if (cursor < text.length && text[cursor] != '\n') text.delete(cursor, cursor + 1)
-            ch == 'u' -> editor.onKeyShortcut(KeyEvent.KEYCODE_Z, ctrl(event, KeyEvent.KEYCODE_Z))
-            ch == 'i' -> setMode(Mode.INSERT)
-            ch == 'a' -> { move(cursor + 1); setMode(Mode.INSERT) }
-            ch == 'A' -> { move(paragraphEnd(cursor)); setMode(Mode.INSERT) }
-            ch == 'I' -> { move(paragraphStart(cursor)); setMode(Mode.INSERT) }
-            // 新起的是一段（和回车一样空一行）：只插一个换行的话，新行会被当成段距空行压扁
-            ch == 'o' -> { val e = paragraphEnd(cursor); text.insert(e, "\n\n"); move(e + 2); setMode(Mode.INSERT) }
-            ch == 'O' -> { val s = paragraphStart(cursor); text.insert(s, "\n\n"); move(s); setMode(Mode.INSERT) }
-        }
+        normal(ch, event)
         if (mode == Mode.NORMAL) stayOnChar()
         return true
     }
 
+    // ---------- normal 模式：数字前缀、操作符（d c y）+ 动作或文本对象 ----------
+
+    /** 正在输入的数字前缀；0 表示没有。 */
+    private var count = 0
+    /** 等待动作的操作符（d、c、y）和它前面的数字。 */
+    private var operator: Char? = null
+    private var operatorCount = 1
+    /** 等待第二个键：g（gg）、i / a（iw、aw）。 */
+    private var pending: Char? = null
+
+    /** 寄存器：d、c、y、x 存进来，p、P 粘出去。[registerLines] 为 true 时是整段。 */
+    private var register = ""
+    private var registerLines = false
+
+    private fun reset() { count = 0; operator = null; operatorCount = 1; pending = null }
+
+    private fun normal(ch: Char, event: KeyEvent) {
+        val t = text
+        val c = cursor
+        // 数字前缀：单独的 0 是“到行首”
+        if (ch in '1'..'9' || (ch == '0' && count > 0)) { count = count * 10 + (ch - '0'); return }
+        val n = count.coerceAtLeast(1)
+        count = 0
+
+        val p = pending
+        pending = null
+        val op = operator
+        if (op != null) {
+            val total = operatorCount * n
+            val range = when {
+                p == 'g' && ch == 'g' -> VimText.linesBetween(t, 0, c)
+                p == 'i' && ch == 'w' -> VimText.wordObject(t, c, around = false)
+                p == 'a' && ch == 'w' -> VimText.wordObject(t, c, around = true)
+                p != null -> null
+                ch == op -> VimText.lines(t, c, total)
+                ch == 'g' || ch == 'i' || ch == 'a' -> { pending = ch; count = 0; return }
+                else -> motionRange(ch, total, change = op == 'c')
+            }
+            operator = null
+            if (range != null) apply(op, range)
+            return
+        }
+
+        when {
+            p == 'g' && ch == 'g' -> move(if (n > 1) VimText.advanceLines(t, 0, n - 1) else 0)
+            p != null -> Unit
+            ch == 'g' -> pending = 'g'
+            ch == 'd' || ch == 'c' || ch == 'y' -> { operator = ch; operatorCount = n }
+            ch == 'D' -> apply('d', VimText.Range(c, VimText.lineEnd(t, c)))
+            ch == 'C' -> apply('c', VimText.Range(c, VimText.lineEnd(t, c)))
+            ch == 'Y' -> apply('y', VimText.lines(t, c, n))
+            ch == 'h' -> repeat(n) { moveChar(-1) }
+            ch == 'l' -> repeat(n) { moveChar(+1) }
+            ch == 'j' -> repeat(n) { moveLine(+1) }
+            ch == 'k' -> repeat(n) { moveLine(-1) }
+            ch == 'w' -> { var to = c; repeat(n) { to = VimText.nextWordStart(t, to) }; move(to) }
+            ch == 'b' -> { var to = c; repeat(n) { to = VimText.prevWordStart(t, to) }; move(to) }
+            ch == 'e' -> { var to = c; repeat(n) { to = VimText.wordEnd(t, to) }; move(to) }
+            ch == '0' -> layout?.let { move(it.getLineStart(it.getLineForOffset(c))) }
+            ch == '$' -> layout?.let { move(lineEndExclusiveNewline(it.getLineForOffset(c))) }
+            // G 停在最后一段的开头（文件末尾的换行后面那一行是空的，不算）
+            ch == 'G' -> move(if (n > 1) VimText.advanceLines(t, 0, n - 1) else VimText.lastLineStart(t))
+            // 和 vim 一样，x 不删换行：否则在空行上按 x 会把上下两段并成一段
+            ch == 'x' -> apply('d', VimText.Range(c, minOf(c + n, VimText.lineEnd(t, c))))
+            ch == 'X' -> apply('d', VimText.Range(maxOf(c - n, VimText.lineStart(t, c)), c))
+            ch == 's' -> apply('c', VimText.Range(c, minOf(c + n, VimText.lineEnd(t, c))))
+            ch == 'p' -> paste(after = true, n)
+            ch == 'P' -> paste(after = false, n)
+            ch == 'u' -> repeat(n) { editor.onKeyShortcut(KeyEvent.KEYCODE_Z, ctrl(event, KeyEvent.KEYCODE_Z)) }
+            ch == 'i' -> setMode(Mode.INSERT)
+            ch == 'a' -> { if (c < t.length && t[c] != '\n') move(c + 1); setMode(Mode.INSERT) }
+            ch == 'A' -> { move(VimText.lineEnd(t, c)); setMode(Mode.INSERT) }
+            ch == 'I' -> { move(VimText.lineStart(t, c)); setMode(Mode.INSERT) }
+            // 新起的是一段（和回车一样空一行）：只插一个换行的话，新行会被当成段距空行压扁
+            ch == 'o' -> { val e = VimText.lineEnd(t, c); t.insert(e, "\n\n"); move(e + 2); setMode(Mode.INSERT) }
+            ch == 'O' -> { val s = VimText.lineStart(t, c); t.insert(s, "\n\n"); move(s); setMode(Mode.INSERT) }
+        }
+    }
+
+    /** 操作符后面跟的动作对应的范围；不支持的动作返回 null（操作取消）。 */
+    private fun motionRange(ch: Char, n: Int, change: Boolean): VimText.Range? {
+        val t = text
+        val c = cursor
+        return when (ch) {
+            'w' -> VimText.wordForward(t, c, n, change)
+            'e' -> { var e = c; repeat(n) { e = VimText.wordEnd(t, e) }; VimText.Range(c, (e + 1).coerceAtMost(t.length)) }
+            'b' -> { var b = c; repeat(n) { b = VimText.prevWordStart(t, b) }; VimText.Range(b, c) }
+            'h' -> VimText.Range(maxOf(c - n, VimText.lineStart(t, c)), c)
+            'l' -> VimText.Range(c, minOf(c + n, VimText.lineEnd(t, c)))
+            '0' -> VimText.Range(VimText.lineStart(t, c), c)
+            '$' -> VimText.Range(c, VimText.lineEnd(t, c))
+            'j' -> VimText.linesBetween(t, c, VimText.advanceLines(t, c, n))
+            'k' -> VimText.linesBetween(t, VimText.advanceLines(t, c, -n), c)
+            'G' -> VimText.linesBetween(t, c, t.length)
+            else -> null
+        }
+    }
+
+    /** 对范围执行操作符：y 存进寄存器，d 存了再删，c 删掉后进入输入模式（整段时留下空行）。 */
+    private fun apply(op: Char, r: VimText.Range) {
+        val t = text
+        if (r.end < r.start || r.end > t.length) return
+        // 空范围（例如空行上的 x）什么都不做，也不清掉寄存器
+        if (r.start == r.end && !r.linewise) { if (op == 'c') setMode(Mode.INSERT); return }
+        register = if (r.linewise) VimText.linesText(t, r) else t.subSequence(r.start, r.end).toString()
+        registerLines = r.linewise
+        when (op) {
+            'y' -> move(if (r.linewise) r.innerStart else r.start)
+            'd' -> {
+                t.delete(r.start, r.end)
+                // 整段删掉后停在下一段开头（删的是最后几段时停在新的最后一段开头）
+                move(if (r.linewise) VimText.lineStart(text, r.start.coerceAtMost(text.length)) else r.start)
+            }
+            'c' -> {
+                // cc：只清空这几段的文字，段落分隔留着，光标停在原位输入
+                val s = if (r.linewise) r.innerStart else r.start
+                val e = if (r.linewise) r.innerEnd else r.end
+                t.delete(s, e)
+                move(s)
+                setMode(Mode.INSERT)
+            }
+        }
+    }
+
+    /** p / P：整段时另起一段，否则插在光标后（P 是光标前）。 */
+    private fun paste(after: Boolean, n: Int) {
+        if (register.isEmpty()) return
+        val t = text
+        val c = cursor
+        if (registerLines) {
+            val content = List(n) { register }.joinToString("\n\n")
+            val (at, insert, to) = if (after) VimText.pasteLinesAfter(t, c, content) else VimText.pasteLinesBefore(t, c, content)
+            t.insert(at, insert)
+            move(to)
+        } else {
+            val content = register.repeat(n)
+            val at = if (after && c < t.length && t[c] != '\n') c + 1 else c
+            t.insert(at, content)
+            move(at + content.length - 1)
+        }
+    }
+
     private fun setMode(m: Mode) {
         mode = m
-        pending = null
+        reset()
         editor.blockCursor = m == Mode.NORMAL
         onModeChange(m)
     }
@@ -124,41 +238,10 @@ class Vim(private val editor: EditorView, private val onModeChange: (Mode) -> Un
         return if (end > 0 && end <= text.length && text[end - 1] == '\n') end - 1 else end
     }
 
-    private fun nextWord(from: Int): Int {
-        words.setText(text.toString())
-        var pos = words.following(from.coerceAtMost(text.length))
-        while (pos != BreakIterator.DONE && pos < text.length && !isWordChar(text[pos])) {
-            pos = words.next()
-        }
-        return if (pos == BreakIterator.DONE) text.length else pos
-    }
 
-    private fun prevWord(from: Int): Int {
-        if (from <= 0) return 0
-        words.setText(text.toString())
-        var pos = words.preceding(from)
-        while (pos != BreakIterator.DONE && pos > 0 && !isWordChar(text[pos])) {
-            pos = words.previous()
-        }
-        return if (pos == BreakIterator.DONE) 0 else pos
-    }
 
-    private fun isWordChar(c: Char) = c.isLetterOrDigit()
 
-    private fun paragraphStart(at: Int): Int = text.lastIndexOf('\n', (at - 1).coerceAtLeast(-1)).let {
-        if (at == 0) 0 else it + 1
-    }
 
-    private fun paragraphEnd(at: Int): Int = text.indexOf('\n', at).let { if (it < 0) text.length else it }
-
-    private fun deleteParagraph() {
-        val s = paragraphStart(cursor)
-        val e = paragraphEnd(cursor)
-        val end = if (e < text.length) e + 1 else e
-        val start = if (end == e && s > 0) s - 1 else s
-        text.delete(start, end)
-        move(start)
-    }
 
     private fun ctrl(src: KeyEvent, code: Int) =
         KeyEvent(src.downTime, src.eventTime, KeyEvent.ACTION_DOWN, code, 0, KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON)
