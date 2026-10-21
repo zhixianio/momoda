@@ -31,8 +31,8 @@ class SettingsPanel(
     private val onDismiss: () -> Unit,
 ) {
 
-    /** 一行设置。[adjust] 收到 -1 或 +1；开关项两个方向都是切换。[value] 返回当前值的文字。 */
-    class Row(val label: String, val value: () -> String, val adjust: ((Int) -> Unit)?, val isToggle: Boolean = false)
+    /** 一行设置。[adjust] 收到 -1 或 +1；开关项两个方向都是切换。[value] 返回当前值的文字。[hint] 是名字下面的小字（例如快捷键）。 */
+    class Row(val label: String, val value: () -> String, val adjust: ((Int) -> Unit)?, val isToggle: Boolean = false, val hint: String = "")
 
     private val dp = context.resources.displayMetrics.density
     private fun px(v: Int) = (v * dp).toInt()
@@ -121,7 +121,11 @@ class SettingsPanel(
             this.typeface = typeface
             gravity = Gravity.CENTER_VERTICAL
         }
-        val label = text(row.label, 17f, Color.BLACK)
+        val label: View = if (row.hint.isEmpty()) text(row.label, 17f, Color.BLACK) else LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(text(row.label, 17f, Color.BLACK))
+            addView(text(row.hint, 12f, Color.rgb(0x77, 0x77, 0x77)))
+        }
         val value = text(row.value(), 16f, Color.BLACK).apply {
             gravity = Gravity.CENTER
             maxLines = 1

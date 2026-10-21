@@ -40,6 +40,35 @@ object PaletteLayout {
         }
     }
 
+    /** 多列排列：第一列“常用”（有的话），后面每组一列。 */
+    fun columns(
+        groups: List<Pair<String, List<String>>>,
+        uses: Map<String, Int>,
+        top: Int = 3,
+        neverFrequent: Set<String> = emptySet(),
+    ): List<Pair<String, List<String>>> {
+        val order = groups.flatMap { it.second }
+        val frequent = order.filter { (uses[it] ?: 0) > 0 && it !in neverFrequent }
+            .sortedWith(compareByDescending<String> { uses[it] ?: 0 }.thenBy { order.indexOf(it) })
+            .take(top)
+        return (if (frequent.isEmpty()) emptyList() else listOf(FREQUENT to frequent)) + groups.filter { it.second.isNotEmpty() }
+    }
+
+    /**
+     * 在多列里移动选中格：上下在同一列里走，左右换到相邻一列的同一行（那列没这么多行就停在最后一行）。
+     * [sizes] 是每列的格数，返回新的（列，行）。
+     */
+    fun move(sizes: List<Int>, col: Int, row: Int, dCol: Int, dRow: Int): Pair<Int, Int> {
+        if (sizes.isEmpty()) return 0 to 0
+        if (dCol != 0) {
+            var c = col + dCol
+            while (c in sizes.indices && sizes[c] == 0) c += dCol
+            if (c !in sizes.indices) return col to row
+            return c to row.coerceAtMost(sizes[c] - 1)
+        }
+        return col to (row + dRow).coerceIn(0, sizes[col] - 1)
+    }
+
     /** 使用次数存成 `id:次数,id:次数`。 */
     fun parseUses(s: String): Map<String, Int> = s.split(',').mapNotNull {
         val (id, n) = it.split(':', limit = 2).takeIf { p -> p.size == 2 } ?: return@mapNotNull null

@@ -336,7 +336,7 @@ object InkList {
      * 搜索框：实体键盘打的字母直接进框，不经过输入法——这样即使输入法处在中文状态，
      * 输入 `xj` 也能立即筛出“新建文档”。软键盘提交的文字照常走输入法。
      */
-    private class SearchField(
+    internal class SearchField(
         context: Context,
         private val navigate: (Int, KeyEvent) -> Boolean,
     ) : EditText(context) {

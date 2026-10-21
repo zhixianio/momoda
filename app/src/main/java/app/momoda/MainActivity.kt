@@ -629,41 +629,35 @@ class MainActivity : Activity() {
     private fun commands(): List<Command> = buildList {
         var group = ""
         fun add(c: Command) { c.group = group; this.add(c) }
+        // 和设置项重复的开关（Zen、专注、Vim、字号）不放在这里：键盘用快捷键，笔在设置里点，设置页标着快捷键
         group = "文档"
         add(Command("new", "新建文档", "Ctrl+N", ::newDoc))
         add(Command("switch", "打开文档", "Ctrl+O", ::showSwitcher))
         add(Command("previous", "切回上一篇", "Ctrl+Tab", ::switchToPrevious))
         add(Command("rename", "修改标题", "", ::renameTitle))
-        add(Command("manage", "管理文档", "回收站、排序、批量查看", ::showManager))
+        add(Command("manage", "管理文档", "回收站、排序", ::showManager))
         add(Command("trash", "删除当前文档", "进回收站", ::deleteDoc))
-        group = "写作"
-        add(Command("zen", "Zen 模式", "Ctrl+.", ::toggleZen))
-        add(Command("focus", "专注模式开关", "Ctrl+Shift+F", ::toggleFocus))
-        add(Command("bigger", "字号放大", "Ctrl+=") { changeTextSize(+1f) })
-        add(Command("smaller", "字号缩小", "Ctrl+-") { changeTextSize(-1f) })
-        add(Command("vim", "Vim 模式开关", "Ctrl+Shift+V", ::toggleVim))
         group = "同步与 AI"
-        add(Command("sync", "立即同步", if (sync.configured) "${sync.repo} · Ctrl+Shift+S" else "未配置", { syncNow(force = true) }))
-        add(Command("github-login", "用 GitHub 登录（同步）", "手机或电脑上输入验证码，不用打 token", ::loginGitHub))
-        add(Command("sync-settings", "GitHub 同步设置", if (sync.configured) sync.repo else "未配置", ::showSyncConfig))
+        add(Command("sync", "立即同步", "Ctrl+Shift+S", { syncNow(force = true) }))
+        add(Command("sync-settings", "同步设置", if (sync.configured) sync.repo else "GitHub 登录、选仓库", ::showSyncConfig))
         add(Command("ai", "AI 助手", "Ctrl+J", ::showAi))
-        add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "未配置", ::showAiConfig))
-        add(Command("ai-prompts", "编辑 AI 指令", Prompts.FILE_NAME, ::editPrompts))
-        add(Command("paste", "从其他设备粘贴", "在手机或电脑上填写，传到这台设备", ::showPaste))
-        group = "其他"
+        add(Command("ai-settings", "AI 设置", if (llm.config.configured) llm.model else "接口、模型、指令", ::showAiConfig))
+        add(Command("paste", "从其他设备粘贴", "手机或电脑上填写", ::showPaste))
+        group = "系统"
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
-        add(Command("soft-keyboard", "显示 / 收起软键盘", "Ctrl+Shift+K", ::toggleSoftKeyboard))
-        if (!store.isPublic) add(Command("access", "授权：把文档存到 Documents/momoda", "", ::requestStorageAccess))
-        updates.latest?.let { r -> add(Command("install-update", "安装新版本 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
-        add(Command("check-update", "检查更新", if (updates.configured) "" else "尚未配置发布地址") { checkForUpdates(force = true) })
-        add(Command("diagnostics", "导出诊断信息", "崩溃记录等，不含文档内容", ::exportDiagnostics))
-        // 调试面板（按键记录、刷新耗时）不放进命令面板，排查问题时用 Ctrl+Shift+D 打开
+        add(Command("soft-keyboard", "软键盘", "Ctrl+Shift+K", ::toggleSoftKeyboard))
+        if (!store.isPublic) add(Command("access", "授权存储", "存到 Documents/momoda", ::requestStorageAccess))
+        val latest = updates.latest
+        if (latest != null) add(Command("install-update", "安装 ${latest.version}", "从 GitHub 下载") { installUpdate(latest) })
+        else add(Command("check-update", "检查更新", if (updates.configured) "" else "尚未配置发布地址") { checkForUpdates(force = true) })
+        add(Command("ime-settings", "输入法设置", "候选窗、预编辑", ::openImeSettings))
         // 把 CapsLock 改成 Ctrl：在这里给键盘选用墨墨打提供的布局（res/xml/keyboard_layouts.xml）。
         // App 自己拦 CapsLock 拦不住大写锁定（系统先切换了才交给 App），所以只走系统布局这一条路
-        add(Command("ime-settings", "输入法设置", "当前输入法自己的设置：候选窗大小、预编辑等", ::openImeSettings))
-        add(Command("hardkeyboard", "系统设置 · 实体键盘", "可选用布局“墨墨打：CapsLock 当 Ctrl”") {
+        add(Command("hardkeyboard", "实体键盘布局", "CapsLock 当 Ctrl") {
             openSystemSettings(Settings.ACTION_HARD_KEYBOARD_SETTINGS, "Settings\$PhysicalKeyboardActivity")
         })
+        add(Command("diagnostics", "导出诊断信息", "不含文档内容", ::exportDiagnostics))
+        // 调试面板（按键记录、刷新耗时）不放进命令面板，排查问题时用 Ctrl+Shift+D 打开
     }
 
     /** 命令面板：最近用过的排在前面（DESIGN §3.2）。 */
@@ -672,17 +666,12 @@ class MainActivity : Activity() {
         val byId = cmds.associateBy { it.id }
         val groups = cmds.groupBy { it.group }.map { (g, list) -> g to list.map { it.id } }
         val uses = PaletteLayout.parseUses(ui.getString("commandUses", "")!!)
-        val entries = PaletteLayout.layout(groups, uses, neverFrequent = setOf("trash"))
-        val items = entries.map { e ->
-            when (e) {
-                is PaletteLayout.Entry.Header -> InkItem(e.title, header = true)
-                is PaletteLayout.Entry.Item -> byId.getValue(e.id).let { InkItem(it.label, it.shortcut, searchable = e.searchable) }
-            }
+        val columns = PaletteLayout.columns(groups, uses, neverFrequent = setOf("trash")).map { (title, ids) ->
+            title to ids.map { id -> byId.getValue(id).let { CommandGrid.Item(it.id, it.label, it.shortcut) } }
         }
-        InkList.show(this, "命令", items, font, onDismiss = ::returnToEditor) { i ->
-            val c = byId.getValue((entries[i] as PaletteLayout.Entry.Item).id)
-            ui.edit().putString("commandUses", PaletteLayout.formatUses(uses + (c.id to (uses[c.id] ?: 0) + 1))).apply()
-            c.run()
+        CommandGrid.show(this, columns, font, onDismiss = ::returnToEditor) { item ->
+            ui.edit().putString("commandUses", PaletteLayout.formatUses(uses + (item.id to (uses[item.id] ?: 0) + 1))).apply()
+            byId.getValue(item.id).run()
         }
     }
 
@@ -826,7 +815,7 @@ class MainActivity : Activity() {
                 settings.font = step(all, all.firstOrNull { it.key == settings.font } ?: fonts.builtIn, d).key
                 applySettings()
             }),
-            SettingsPanel.Row("字号", { "%.0f".format(settings.textSize) }, { d -> settings.textSize += d; applySettings() }),
+            SettingsPanel.Row("字号", { "%.0f".format(settings.textSize) }, { d -> settings.textSize += d; applySettings() }, hint = "Ctrl+=  Ctrl+-"),
             SettingsPanel.Row("行距", { "%.2f".format(settings.lineSpacing).trimEnd('0').trimEnd('.') }, { d ->
                 settings.lineSpacing = step(UserSettings.LINE_SPACINGS, settings.lineSpacing, d); applySettings()
             }),
@@ -840,9 +829,9 @@ class MainActivity : Activity() {
             SettingsPanel.Row("方括号键输入「」", { onOff(settings.cornerQuotes) }, { settings.cornerQuotes = !settings.cornerQuotes; applySettings() }, isToggle = true),
             SettingsPanel.Row("中英文间加空格", { onOff(settings.autoSpace) }, { settings.autoSpace = !settings.autoSpace; applySettings() }, isToggle = true),
             SettingsPanel.Row("段首缩进两字", { onOff(settings.indent) }, { settings.indent = !settings.indent; applySettings() }, isToggle = true),
-            SettingsPanel.Row("页眉页脚", { onOff(settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true),
-            SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true),
-            SettingsPanel.Row("Vim 模式", { onOff(settings.vim) }, { settings.vim = !settings.vim; applySettings() }, isToggle = true),
+            SettingsPanel.Row("Zen 模式", { onOff(!settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true, hint = "隐藏页眉页脚 · Ctrl+."),
+            SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true, hint = "只突出当前段落 · Ctrl+Shift+F"),
+            SettingsPanel.Row("Vim 模式", { onOff(settings.vim) }, { settings.vim = !settings.vim; applySettings() }, isToggle = true, hint = "Ctrl+Shift+V"),
             SettingsPanel.Row("自动检查更新", { onOff(settings.autoUpdate) }, { settings.autoUpdate = !settings.autoUpdate }, isToggle = true),
         )
         val version = packageManager.getPackageInfo(packageName, 0).versionName
@@ -883,7 +872,7 @@ class MainActivity : Activity() {
 
     private fun showAiConfig() {
         save()
-        AiConfigPanel(this, font, llm, onPaste = ::showPaste, onDismiss = ::returnToEditor).show()
+        AiConfigPanel(this, font, llm, onPaste = ::showPaste, onEditPrompts = ::editPrompts, onDismiss = ::returnToEditor).show()
     }
 
     /** Ctrl+J：选指令 → 对选区（没有选区时是光标所在段落）调用模型 → 结果面板里确认。 */

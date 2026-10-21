@@ -33,6 +33,17 @@ class PaletteLayoutTest {
         PaletteLayout.layout(groups, mapOf("trash" to 9, "zen" to 1), neverFrequent = setOf("trash")).take(3),
     )
 
+    @Test fun columnsPutFrequentFirst() = assertEquals(
+        listOf("常用" to listOf("zen"), "文档" to listOf("new", "open", "trash"), "写作" to listOf("zen", "vim")),
+        PaletteLayout.columns(groups, mapOf("zen" to 2, "trash" to 5), neverFrequent = setOf("trash")),
+    )
+
+    @Test fun moveDownStopsAtColumnEnd() = assertEquals(0 to 2, PaletteLayout.move(listOf(3, 2), 0, 2, 0, +1))
+
+    @Test fun moveRightClampsRow() = assertEquals(1 to 1, PaletteLayout.move(listOf(3, 2), 0, 2, +1, 0))
+
+    @Test fun moveLeftAtEdgeStays() = assertEquals(0 to 1, PaletteLayout.move(listOf(3, 2), 0, 1, -1, 0))
+
     @Test fun usesRoundTrip() = assertEquals(mapOf("a" to 3, "b" to 1), PaletteLayout.parseUses(PaletteLayout.formatUses(mapOf("a" to 3, "b" to 1))))
 
     @Test fun badUsesIgnored() = assertEquals(mapOf("a" to 3), PaletteLayout.parseUses("a:3,,b,c:x"))

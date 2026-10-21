@@ -216,6 +216,8 @@ class AiConfigPanel(
     private val settings: LlmSettings,
     /** 关掉这个面板，打开“从其他设备粘贴”：长的地址和 key 在手机或电脑上填更方便。 */
     private val onPaste: () -> Unit,
+    /** 关掉这个面板，打开 prompts.md 编辑自定义指令。 */
+    private val onEditPrompts: () -> Unit,
     private val onDismiss: () -> Unit,
 ) {
     fun show() {
@@ -283,6 +285,7 @@ class AiConfigPanel(
                 setPadding(0, c.px(14), 0, 0)
                 addView(c.inkButton("测试连接", typeface) { test() })
                 addView(c.inkButton("在其他设备上填写", typeface) { save(); dialog.dismiss(); onPaste() })
+                addView(c.inkButton("编辑指令", typeface) { save(); dialog.dismiss(); onEditPrompts() })
                 addView(View(c), LinearLayout.LayoutParams(0, 1, 1f))
                 addView(c.inkButton("取消", typeface) { dialog.dismiss() })
                 addView(c.inkButton("保存", typeface) { save(); dialog.dismiss() })
