@@ -9,6 +9,8 @@
         android:maxSdkVersion="29" />
     <!-- 检查更新（每天最多一次查询 GitHub Releases）和 AI（用户自己配置的接口）；安装更新时由系统弹窗确认 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 判断有没有网：没网时页眉显示“离线”而不是“同步失败”，联网后自动同步 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- “从其他设备粘贴”窗口打开期间保持 Wi-Fi 全速（WifiLock） -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />

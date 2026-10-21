@@ -10,6 +10,9 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
@@ -51,8 +54,10 @@ class MainActivity : Activity() {
     private lateinit var footer: TextView
     /** 页脚中间：当前的输入状态（Vim 普通/输入、大写锁定）。 */
     private lateinit var footerMode: TextView
-    /** 页脚右侧（“⋯”左边）：同步、更新、存储授权这类提示。 */
+    /** 页脚右侧的占位（“⋯”在这里），让中间的状态居中。提示类文字放在页眉时间左边。 */
     private lateinit var footerNotes: TextView
+    /** 页眉右侧的时间（低电量时带电量），由 [refreshClock] 按分钟更新。 */
+    private var clockText = ""
     private lateinit var footerBar: LinearLayout
     private lateinit var debug: TextView
     private lateinit var menuButton: TextView
@@ -180,6 +185,7 @@ class MainActivity : Activity() {
         })
 
         if (!store.isPublic && !store.askedForAccess) handler.post { askForStorageAccess() }
+        runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback) }
     }
 
     private fun buildLayout() {
@@ -290,6 +296,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         if (updatesLazy.isInitialized()) updates.close()
         super.onDestroy()
     }
@@ -985,6 +992,13 @@ class MainActivity : Activity() {
     private fun syncNow(force: Boolean) {
         if (!sync.configured) { if (force) showSyncConfig(); return }
         if (syncing) return
+        if (!isOnline()) {
+            // 没网时不去试：显示“离线”，联网后 [networkCallback] 会自动再同步
+            syncStatus = "离线"
+            refreshChrome()
+            if (force) toast("没有网络，联网后会自动同步")
+            return
+        }
         syncing = true
         save()
         syncStatus = "同步中"
@@ -1006,12 +1020,28 @@ class MainActivity : Activity() {
                         return@onFailure
                     }
                     Log.w("momoda", "同步失败", it)
-                    syncStatus = "同步失败"
-                    if (force) toast("同步失败：${it.message ?: it.javaClass.simpleName}")
+                    // 连不上服务器多半是网络问题（Wi-Fi 断了、DNS 失败、超时），显示“离线”，联网后自动重试
+                    val offline = !isOnline() || it is java.net.UnknownHostException || it is java.net.ConnectException ||
+                        it is java.net.SocketTimeoutException || it is java.net.NoRouteToHostException
+                    syncStatus = if (offline) "离线" else "同步失败"
+                    if (force) toast(if (offline) "连不上网络，联网后会自动同步" else "同步失败：${it.message ?: it.javaClass.simpleName}")
                 }
                 refreshChrome()
             }
         }, "github-sync").apply { isDaemon = true }.start()
+    }
+
+    private fun isOnline(): Boolean {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return true
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    /** 联网后：上次因为离线没同步成，就补一次。 */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            handler.post { if (syncStatus == "离线") autoSync(minIntervalMs = 0) }
+        }
     }
 
     /** 同步改动了本地文件：当前文档被删就换一篇；没有未保存修改就载入新版本。 */
@@ -1087,11 +1117,7 @@ class MainActivity : Activity() {
             }
         } else null
         footerMode.text = listOfNotNull(vimMode, if (capsLockOn) "大写锁定" else null).joinToString("　")
-        footerNotes.text = listOfNotNull(
-            syncStatus.ifEmpty { null },
-            updates.latest?.let { "有新版本 ${it.version}" },
-            if (store.isPublic) null else "未授权存储",
-        ).joinToString(" · ")
+        refreshHeaderRight()
     }
 
     /** 页眉右侧：时间，电量低于 20% 时附带电量。按分钟更新。 */
@@ -1103,7 +1129,18 @@ class MainActivity : Activity() {
             val s = it.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
             if (l >= 0 && s > 0) l * 100 / s else null
         }
-        headerClock.text = if (level != null && level < 20) "电量 $level%　$time" else time
+        clockText = if (level != null && level < 20) "电量 $level%　$time" else time
+        refreshHeaderRight()
+    }
+
+    /** 页眉右侧：同步、更新、存储授权这类提示，然后是时间。右下角已经有“⋯”，不在那里放文字。 */
+    private fun refreshHeaderRight() {
+        val notes = listOfNotNull(
+            syncStatus.ifEmpty { null },
+            updates.latest?.let { "有新版本 ${it.version}" },
+            if (store.isPublic) null else "未授权存储",
+        )
+        headerClock.text = (notes + clockText).filter { it.isNotEmpty() }.joinToString("　")
     }
 
     private fun refreshDebug() {
