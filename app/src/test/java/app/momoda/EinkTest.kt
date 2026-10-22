@@ -198,3 +198,45 @@ class RockchipModeCodeTest {
         assertNull(RockchipEink.duCode(""))
     }
 }
+
+class TransientModeTest {
+    private var mode: String? = "13"
+    private val writes = mutableListOf<String>()
+    private val t = TransientMode({ mode }, { mode = it; writes += it })
+
+    @Test fun switchesAndRestores() {
+        t.begin("3")
+        assertTrue(t.active)
+        assertEquals("3", mode)
+        t.finish()
+        assertFalse(t.active)
+        assertEquals("13", mode)
+        assertEquals(listOf("3", "13"), writes)
+    }
+
+    @Test fun secondBeginKeepsFirstPrevious() {
+        t.begin("3")
+        t.begin("4") // 上一次还没换回来又清了一次
+        t.finish()
+        assertEquals("13", mode)
+    }
+
+    @Test fun doesNotClobberOthersChange() {
+        t.begin("3")
+        mode = "7" // 用户在下拉菜单里改了
+        t.finish()
+        assertEquals("7", mode)
+    }
+
+    @Test fun finishWithoutBeginIsHarmless() {
+        t.finish()
+        assertTrue(writes.isEmpty())
+    }
+
+    @Test fun unreadableModeDoesNothing() {
+        mode = null
+        t.begin("3")
+        assertFalse(t.active)
+        assertTrue(writes.isEmpty())
+    }
+}

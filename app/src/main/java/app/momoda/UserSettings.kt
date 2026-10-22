@@ -73,6 +73,16 @@ class UserSettings(context: Context) {
         get() = prefs.getLong("ghostCleanMs", 0L)
         set(v) = prefs.edit().putLong("ghostCleanMs", v).apply()
 
+    /** 清残影用哪种波形：全刷（会闪）或几种全屏灰阶（不翻转）。 */
+    var cleanStyle: CleanStyle
+        get() = runCatching { CleanStyle.valueOf(prefs.getString("cleanStyle", null) ?: "") }.getOrDefault(CleanStyle.FULL)
+        set(v) = prefs.edit().putString("cleanStyle", v.name).apply()
+
+    /** 翻页、换文档、关掉面板这些本来就整屏重画的时候，顺手清残影。 */
+    var cleanOnRedraw: Boolean
+        get() = prefs.getBoolean("cleanOnRedraw", false)
+        set(v) = prefs.edit().putBoolean("cleanOnRedraw", v).apply()
+
     var autoUpdate: Boolean
         get() = prefs.getBoolean("autoUpdate", true)
         set(v) = prefs.edit().putBoolean("autoUpdate", v).apply()

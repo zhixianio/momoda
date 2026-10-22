@@ -24,8 +24,13 @@ interface EinkController {
     fun enter(mode: TypingRefresh)
     /** 离开写作：恢复进入时记下的模式。可以重复调用。 */
     fun leave()
-    /** 全屏用高质量波形刷一次，清残影（会闪一下）。[view] 用来发出新的一帧。 */
-    fun fullRefresh(view: View)
+    /** 这台设备支持的清残影方式。 */
+    val cleanStyles: List<CleanStyle>
+    /**
+     * 清残影：用 [style] 的波形把整屏刷一次。[view] 用来发出新的一帧。
+     * 在本来就要整屏重画（翻页、换文档）的那一帧之前调用，就和那次重画合成一次。
+     */
+    fun clean(view: View, style: CleanStyle)
     /** 诊断信息里的一行。 */
     fun describe(): String
 }
@@ -34,6 +39,8 @@ interface EinkController {
 enum class TypingRefresh(val label: String) {
     SYSTEM("跟随系统"),
     AUTO("自动"),
+    /** 灰阶局刷（Rockchip PART_GL16）：只刷变了的像素，16 级灰，不闪，比极速慢。 */
+    GRAY("灰阶局刷"),
     DU("极速"),
     A2("黑白"),
 }
@@ -43,8 +50,43 @@ object NoEink : EinkController {
     override val typingModes = listOf(TypingRefresh.SYSTEM)
     override fun enter(mode: TypingRefresh) = Unit
     override fun leave() = Unit
-    override fun fullRefresh(view: View) = Unit
+    override val cleanStyles = listOf(CleanStyle.FULL)
+    override fun clean(view: View, style: CleanStyle) = Unit
     override fun describe() = "墨水屏接口：无"
+}
+
+/** 清残影的方式：全刷会整屏黑白翻转一次；灰阶几种是全屏刷一遍灰阶波形，不翻转，清得没那么干净。 */
+enum class CleanStyle(val label: String) {
+    FULL("全刷（会闪）"),
+    GL16("灰阶 GL16"),
+    GLR16("灰阶 GLR16"),
+    GLD16("灰阶 GLD16"),
+}
+
+/**
+ * 临时换一个刷新模式，刷完一帧再换回来。纯逻辑，单独测试。
+ * 换回之前，别处（每次按键的 [ModeKeeper.enter]）不要去“纠正”模式，否则会把临时模式当成系统原来的模式记下。
+ */
+class TransientMode(private val get: () -> String?, private val set: (String) -> Unit) {
+    private var previous: String? = null
+    private var temporary: String? = null
+
+    val active get() = temporary != null
+
+    fun begin(mode: String) {
+        if (temporary == null) previous = get() ?: return
+        if (get() != mode) set(mode)
+        temporary = mode
+    }
+
+    /** 换回进入前的模式；屏幕已经被别人改成别的模式就不动。 */
+    fun finish() {
+        val t = temporary ?: return
+        val p = previous
+        temporary = null
+        previous = null
+        if (p != null && p != t && get() == t) set(p)
+    }
 }
 
 object Eink {
@@ -107,28 +149,76 @@ class RockchipEink private constructor(
     private val getMode: Method,
     private val sendOneFullFrame: Method?,
     private val keeper: ModeKeeper,
+    private val transient: TransientMode,
 ) : EinkController {
 
     override val vendor = "${Build.MANUFACTURER} ${Build.MODEL}（Rockchip）"
     private val du = duCode(System.getProperty("os.version").orEmpty())
-    override val typingModes = listOfNotNull(TypingRefresh.SYSTEM, TypingRefresh.AUTO, if (du != null) TypingRefresh.DU else null, TypingRefresh.A2)
+    override val typingModes = listOfNotNull(
+        TypingRefresh.SYSTEM, TypingRefresh.AUTO, if (du != null) TypingRefresh.DU else null, TypingRefresh.A2, TypingRefresh.GRAY,
+    )
+    override val cleanStyles = listOfNotNull(if (sendOneFullFrame != null) CleanStyle.FULL else null, CleanStyle.GL16, CleanStyle.GLR16, CleanStyle.GLD16)
 
     private fun code(mode: TypingRefresh): String? = when (mode) {
         TypingRefresh.SYSTEM -> null
         TypingRefresh.AUTO -> EPD_AUTO
         TypingRefresh.DU -> du ?: EPD_AUTO
         TypingRefresh.A2 -> EPD_A2
+        TypingRefresh.GRAY -> EPD_PART_GL16
     }
 
     override fun enter(mode: TypingRefresh) {
+        // 正在用临时模式清残影：等它换回来再说
+        if (transient.active) return
         runCatching { keeper.enter(code(mode)) }.onFailure { Log.w("momoda", "切换刷新模式失败", it) }
     }
 
     override fun leave() {
+        finishTransient()
         runCatching { keeper.leave() }.onFailure { Log.w("momoda", "恢复刷新模式失败", it) }
     }
 
-    override fun fullRefresh(view: View) {
+    override fun clean(view: View, style: CleanStyle) {
+        val mode = when (style) {
+            CleanStyle.FULL -> { fullFrame(view); return }
+            CleanStyle.GL16 -> EPD_FULL_GL16
+            CleanStyle.GLR16 -> EPD_FULL_GLR16
+            CleanStyle.GLD16 -> EPD_FULL_GLD16
+        }
+        runCatching {
+            // 显示服务在提交一帧时读 sys.eink.mode，决定这一帧用什么波形：先换模式，再让整个窗口重画一帧，
+            // 这一帧画完、交给屏幕之后再换回来
+            transient.begin(mode)
+            val root = view.rootView
+            root.invalidate()
+            restoreView = root
+            root.viewTreeObserver.addOnDrawListener(drawn)
+            handler.removeCallbacks(restore)
+            handler.postDelayed(restore, RESTORE_TIMEOUT_MS) // 万一没有画出这一帧，也要换回来
+            Log.i("momoda", "清残影：临时模式 $mode")
+        }.onFailure { Log.w("momoda", "清残影失败", it); finishTransient() }
+    }
+
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var restoreView: View? = null
+    private val restore = Runnable { finishTransient() }
+    private val drawn = object : android.view.ViewTreeObserver.OnDrawListener {
+        override fun onDraw() {
+            // 画完了；交给屏幕还要一点时间。不能在 onDraw 里摘掉监听器
+            handler.post { restoreView?.viewTreeObserver?.removeOnDrawListener(this) }
+            handler.removeCallbacks(restore)
+            handler.postDelayed(restore, RESTORE_AFTER_DRAW_MS)
+        }
+    }
+
+    private fun finishTransient() {
+        handler.removeCallbacks(restore)
+        restoreView?.let { v -> handler.post { v.viewTreeObserver.removeOnDrawListener(drawn) } }
+        restoreView = null
+        runCatching { transient.finish() }.onFailure { Log.w("momoda", "换回刷新模式失败", it) }
+    }
+
+    private fun fullFrame(view: View) {
         val m = sendOneFullFrame ?: return
         runCatching {
             // sendOneFullFrame 把进程内的计数写进 sys.ebook.one_full_mode_timeline，显示服务看到它变了就全刷下一帧。
@@ -151,6 +241,15 @@ class RockchipEink private constructor(
         // 框架里 EinkManager.EinkMode 的常量是旧的 4.19 编号，和 6.1 内核对不上，不能拿来用
         const val EPD_AUTO = "0"
         const val EPD_A2 = "12"
+        // 全屏灰阶（3–5）和灰阶局刷（8）在 4.19、6.1 两个分支里编号相同
+        const val EPD_FULL_GL16 = "3"
+        const val EPD_FULL_GLR16 = "4"
+        const val EPD_FULL_GLD16 = "5"
+        const val EPD_PART_GL16 = "8"
+
+        /** 换了临时模式的那一帧画完以后，再等多久换回来（留给显示服务提交这一帧）。 */
+        const val RESTORE_AFTER_DRAW_MS = 300L
+        private const val RESTORE_TIMEOUT_MS = 1500L
 
         /** 按内核版本（os.version，例如 "6.1.75"）给出 DU 的编号；认不出的内核返回 null，不提供这个选项。 */
         fun duCode(kernel: String): String? {
@@ -187,7 +286,7 @@ class RockchipEink private constructor(
             val read = { getProp("sys.eink.mode")?.ifEmpty { null } ?: get.invoke(manager) as String? }
             val write = { mode: String -> Log.i("momoda", "墨水屏刷新模式 ${read()} → $mode"); set.invoke(manager, mode); Unit }
             val keeper = ModeKeeper(read, write, store)
-            return RockchipEink(manager, get, full, keeper)
+            return RockchipEink(manager, get, full, keeper, TransientMode(read, write))
         }
 
         private val systemPropertiesGet: Method? by lazy {
