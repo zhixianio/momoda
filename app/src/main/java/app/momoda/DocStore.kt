@@ -45,17 +45,18 @@ class DocStore(private val context: Context) {
     fun read(file: File): String {
         if (!file.exists()) return ""
         val text = file.readText()
-        knownMtime[file.absolutePath] = file.lastModified()
+        known.remember(file.absolutePath, file.lastModified(), text)
         return text
     }
 
-    /** 我们最后一次读或写某个文件时它的修改时间，用来发现“被其他程序改过”。 */
-    private val knownMtime = HashMap<String, Long>()
+    /** 我们最后一次读或写每个文件时它的样子，用来发现“被其他程序改过”。 */
+    private val known = KnownFiles()
 
     /** 文件在我们上次读写之后被别的程序改过（或删掉了）。 */
     fun changedOnDisk(file: File): Boolean {
-        val known = knownMtime[file.absolutePath] ?: return false
-        return !file.exists() || file.lastModified() != known
+        val changed = known.changed(file.absolutePath, file.exists(), file.lastModified()) { file.readText() }
+        if (changed) Log.w("momoda", "文件被改过：${file.name}，现在${if (file.exists()) "的修改时间 ${file.lastModified()}" else "已删除"}")
+        return changed
     }
 
     /** 冲突时把我们的版本另存为“标题 冲突 1020-0815.md”，不动对方的版本。 */
@@ -78,7 +79,7 @@ class DocStore(private val context: Context) {
             file.writeText(text)
             tmp.delete()
         }
-        knownMtime[file.absolutePath] = file.lastModified()
+        known.remember(file.absolutePath, file.lastModified(), text)
     }
 
     /**
@@ -136,7 +137,7 @@ class DocStore(private val context: Context) {
     private fun rename(file: File, newName: String): File {
         val target = File(dir, newName)
         if (!file.renameTo(target)) return file
-        knownMtime.remove(file.absolutePath)?.let { knownMtime[target.absolutePath] = target.lastModified() }
+        known.move(file.absolutePath, target.absolutePath, target.lastModified())
         val cursor = cursorOf(file)
         forget(file)
         if (cursor >= 0) saveCursor(target, cursor)
@@ -279,5 +280,35 @@ class DocStore(private val context: Context) {
         fun hasPublicAccess(context: Context): Boolean =
             if (Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager()
             else context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    }
+}
+
+/**
+ * 记住我们最后一次读写每个文件时的修改时间和内容，判断它是不是被别的程序改过。
+ * 修改时间对不上时再比内容：内容没变就不算（修改时间可能因为文件系统、同步写回同样的内容而变），
+ * 免得凭空多出一篇“冲突”副本。纯逻辑，单独测试。
+ */
+class KnownFiles {
+    private class Seen(var mtime: Long, val size: Int, val hash: Int)
+    private val seen = HashMap<String, Seen>()
+
+    fun remember(path: String, mtime: Long, text: String) {
+        seen[path] = Seen(mtime, text.length, text.hashCode())
+    }
+
+    /** 文件改名：记录跟着走（改名不改内容）。 */
+    fun move(from: String, to: String, mtime: Long) {
+        seen.remove(from)?.let { seen[to] = it.also { s -> s.mtime = mtime } }
+    }
+
+    /** 没读写过的文件不算被改过；删掉了算。[read] 只在修改时间对不上时才调用。 */
+    fun changed(path: String, exists: Boolean, mtime: Long, read: () -> String): Boolean {
+        val s = seen[path] ?: return false
+        if (!exists) return true
+        if (mtime == s.mtime) return false
+        val text = runCatching(read).getOrNull() ?: return true
+        if (text.length != s.size || text.hashCode() != s.hash) return true
+        s.mtime = mtime
+        return false
     }
 }
