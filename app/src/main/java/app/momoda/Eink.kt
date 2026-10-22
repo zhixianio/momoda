@@ -50,7 +50,7 @@ object NoEink : EinkController {
 object Eink {
     /** 按厂商挑实现；任何一步失败都退回 [NoEink]。 */
     fun detect(context: Context): EinkController =
-        runCatching { EinkManagerEink.create(context) }
+        runCatching { RockchipEink.create(context) }
             .onFailure { Log.w("momoda", "墨水屏接口不可用", it) }
             .getOrNull() ?: NoEink
 }
@@ -73,30 +73,20 @@ class ModeKeeper(
         }
     }
 
-    /** 这个进程里最后一次要求的模式；[ModeKeeper.Store.applied] 是设下去之后实际读回来的编号。 */
-    private var requested: String? = null
-
-    /**
-     * 切到 [target]；null 表示不改（等同于 [leave]）。已经切好时不写任何东西。
-     * 系统可能把编号换成等价的另一个（汉王高通平台：极速写 13，读回来是 32，夜间模式是 33），
-     * 所以“我们设的模式”记的是设完以后读回来的值。
-     */
+    /** 切到 [target]；null 表示不改（等同于 [leave]）。已经切好时不写任何东西。 */
     fun enter(target: String?) {
         if (target == null) { leave(); return }
         val now = get() ?: return
         val applied = store.applied
-        if (now == applied && requested == target) return
+        if (now == target && applied == target) return
         // 第一次进入，或者我们设过之后被系统、用户改成了别的：以现在的为“原来的模式”
         if (applied == null || now != applied) store.original = now
         if (now != target) set(target)
-        val actual = get() ?: target
-        if (applied != actual) store.applied = actual
-        requested = target
+        if (applied != target) store.applied = target
     }
 
     /** 恢复原来的模式。只在屏幕还是我们设的模式时才改回去：别人改过就不动它。 */
     fun leave() {
-        requested = null
         val original = store.original
         val applied = store.applied
         if (original == null && applied == null) return
@@ -108,42 +98,28 @@ class ModeKeeper(
 }
 
 /**
- * 带 android.os.EinkManager 的电子书固件（隐藏接口，反射调用）：系统服务 "eink"，
+ * Rockchip 电子书平台（汉王 N10 Pro 等，RK3566/RK3576）：系统服务 "eink"，
+ * 类 android.os.EinkManager（隐藏接口，反射调用）。
  * setMode 写的是 sys.eink.mode（不持久化，重启复位）；sendOneFullFrame 让下一帧用 GC16 全刷。
- * 同一个类在不同平台上模式编号不同，见 [Platform]。
  */
-class EinkManagerEink private constructor(
+class RockchipEink private constructor(
     private val manager: Any,
     private val getMode: Method,
     private val sendOneFullFrame: Method?,
     private val keeper: ModeKeeper,
-    private val platform: Platform,
 ) : EinkController {
 
-    /**
-     * 一种固件：各打字模式写给 setMode 的编号（null 表示不提供），以及 sendOneFullFrame 写的属性名。
-     */
-    data class Platform(
-        val name: String,
-        val auto: String?,
-        val du: String?,
-        val a2: String?,
-        val fullFrameProp: String,
-    )
-
-    override val vendor = "${Build.BRAND} ${Build.MODEL}（${platform.name}）"
+    override val vendor = "${Build.MANUFACTURER} ${Build.MODEL}（Rockchip）"
+    private val du = duCode(System.getProperty("os.version").orEmpty())
     override val typingModes = listOfNotNull(
-        TypingRefresh.SYSTEM,
-        if (platform.auto != null) TypingRefresh.AUTO else null,
-        if (platform.du != null) TypingRefresh.DU else null,
-        if (platform.a2 != null) TypingRefresh.A2 else null,
+        TypingRefresh.SYSTEM, TypingRefresh.AUTO, if (du != null) TypingRefresh.DU else null, TypingRefresh.A2,
     )
 
     private fun code(mode: TypingRefresh): String? = when (mode) {
         TypingRefresh.SYSTEM -> null
-        TypingRefresh.AUTO -> platform.auto
-        TypingRefresh.DU -> platform.du
-        TypingRefresh.A2 -> platform.a2
+        TypingRefresh.AUTO -> EPD_AUTO
+        TypingRefresh.DU -> du ?: EPD_AUTO
+        TypingRefresh.A2 -> EPD_A2
     }
 
     override fun enter(mode: TypingRefresh) {
@@ -157,11 +133,11 @@ class EinkManagerEink private constructor(
     override fun fullRefresh(view: View) {
         val m = sendOneFullFrame ?: return
         runCatching {
-            // sendOneFullFrame 把进程内的计数写进 one_full_mode_timeline 属性，显示服务看到它变了就全刷下一帧。
+            // sendOneFullFrame 把进程内的计数写进 sys.ebook.one_full_mode_timeline，显示服务看到它变了就全刷下一帧。
             // 计数每个进程从 1 开始，可能刚好等于属性里别的 App 留下的值：没变就再调一次
-            val before = getProp(platform.fullFrameProp)
+            val before = getProp(FULL_FRAME_PROP)
             m.invoke(manager)
-            if (before != null && getProp(platform.fullFrameProp) == before) m.invoke(manager)
+            if (before != null && getProp(FULL_FRAME_PROP) == before) m.invoke(manager)
             // 全刷标记只作用于下一帧：整个窗口重画一次，把这一帧发出去
             view.rootView.invalidate()
         }.onFailure { Log.w("momoda", "全刷失败", it) }
@@ -172,20 +148,11 @@ class EinkManagerEink private constructor(
     override fun describe() = "墨水屏接口：$vendor EinkManager，当前模式 ${currentMode()}，全刷${if (sendOneFullFrame != null) "可用" else "不可用"}"
 
     companion object {
-        /**
-         * 认出固件，给出模式编号（docs/eink-sdk.md）；认不出返回 null，什么都不碰。
-         * - Rockchip 电子书固件（汉王 N10 Pro 等）：有 persist.sys.rk-ebook 或 ro.rk.ebook_settings。
-         *   AUTO=0、A2=12；DU 按内核分支（见 [duCode]）。
-         * - 汉王高通平台（Clear 7 Turbo，型号 P7）：品牌 HANVON、硬件 qcom。setMode 会把老编号换成本平台的：
-         *   13（汉王“极速”）→ 32，夜间模式 33。
-         * 框架里 EinkManager.EinkMode 的常量在两个平台上都和实际不完全对得上，不能拿来用。
-         */
-        fun platform(rkEbook: Boolean, brand: String, hardware: String, kernel: String): Platform? = when {
-            rkEbook -> Platform("Rockchip", auto = "0", du = duCode(kernel), a2 = "12", fullFrameProp = "sys.ebook.one_full_mode_timeline")
-            brand.equals("HANVON", ignoreCase = true) && hardware == "qcom" ->
-                Platform("汉王高通", auto = "0", du = "13", a2 = "12", fullFrameProp = "sys.eink.one_full_mode_timeline")
-            else -> null
-        }
+        // 模式编号见 docs/eink-sdk.md。AUTO、A2 在各内核分支都一样；DU 不一样：
+        // 内核 6.1 是 13（汉王 N10 Pro 实测，“极速”就是它），4.19 是 14（13 在那里是 A2_DITHER）。
+        // 框架里 EinkManager.EinkMode 的常量是旧的 4.19 编号，和 6.1 内核对不上，不能拿来用
+        const val EPD_AUTO = "0"
+        const val EPD_A2 = "12"
 
         /** 按内核版本（os.version，例如 "6.1.75"）给出 DU 的编号；认不出的内核返回 null，不提供这个选项。 */
         fun duCode(kernel: String): String? {
@@ -198,11 +165,11 @@ class EinkManagerEink private constructor(
                 else -> null
             }
         }
+        private const val FULL_FRAME_PROP = "sys.ebook.one_full_mode_timeline"
 
-        fun create(context: Context): EinkManagerEink? {
-            // 只认得出来的固件：别的设备上不去碰名为 "eink" 的服务
-            val rkEbook = getProp("persist.sys.rk-ebook") == "true" || getProp("ro.rk.ebook_settings") == "true"
-            val platform = platform(rkEbook, Build.BRAND, Build.HARDWARE, System.getProperty("os.version").orEmpty()) ?: return null
+        fun create(context: Context): RockchipEink? {
+            // 只认 Rockchip 电子书固件：别的设备上不去碰名为 "eink" 的服务
+            if (getProp("persist.sys.rk-ebook") != "true" && getProp("ro.rk.ebook_settings") != "true") return null
             val manager = context.getSystemService("eink") ?: return null
             val cls = manager.javaClass
             val set = cls.getMethod("setMode", String::class.java)
@@ -222,7 +189,7 @@ class EinkManagerEink private constructor(
             val read = { getProp("sys.eink.mode")?.ifEmpty { null } ?: get.invoke(manager) as String? }
             val write = { mode: String -> Log.i("momoda", "墨水屏刷新模式 ${read()} → $mode"); set.invoke(manager, mode); Unit }
             val keeper = ModeKeeper(read, write, store)
-            return EinkManagerEink(manager, get, full, keeper, platform)
+            return RockchipEink(manager, get, full, keeper)
         }
 
         private val systemPropertiesGet: Method? by lazy {

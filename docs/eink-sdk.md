@@ -86,15 +86,19 @@
 
 ## 汉王 Clear 7 Turbo（型号 P7，高通 bengal，Android 14，内核 5.15）
 
+### 结论：只有极速可用，墨墨打不做适配、跟随系统【用户实测】
+
+用户在 Clear 7 Turbo 上实测，只有“极速”显示正常，其他刷新模式都不行。所以墨墨打在这台机器上不做专门适配，直接跟随系统的刷新设置；想要极速，就在汉王的“显示优化”里给墨墨打选极速。下面是当时调查和接口实测的记录，留作参考。
+
 ### 刷新模式：可用【已验证】
 
 - 也有 `android.os.EinkManager`，汉王把 Rockchip 那套框架移植了过来。`setMode(String)`、`getMode()`、`sendOneFullFrame()` 的签名都一样，服务端 `EinkService.setProperty` 同样不检查调用者，反射调用没有被拦。
-- 没有 `persist.sys.rk-ebook` 这类属性。识别方法见上文“识别方式”。
+- 没有 `persist.sys.rk-ebook` 这类属性。当时用 `Build.BRAND=HANVON` 且 `Build.HARDWARE=qcom` 识别（`MANUFACTURER` 是 QUALCOMM，不能用来认）；适配撤掉后墨墨打不再识别这台机器。
 - 全刷写的属性名不一样：这里是 `sys.eink.one_full_mode_timeline`，N10 是 `sys.ebook.…`。
 - **编号是另一套**，`setMode` 里会做转换：
   - 写 7→8、9→26、14→28、15→31、13 或 16→32；
   - 打开夜间模式（反色）时再换成夜间版：26→27、30→31、32→33、34→35。
-  - 所以写下去的编号和读回来的可能不同。`ModeKeeper` 记的是写完以后读回来的值，否则每次按键都会以为模式被别人改了。
+  - 所以写下去的编号和读回来的可能不同。当时的适配让 `ModeKeeper` 记写完以后读回来的值，否则每次按键都会以为模式被别人改了（已随适配一起撤掉）。
 - 汉王“显示优化”里按应用设置的刷新（SystemUI 插件 `DisplayOptimizeSettings.RefreshMode`，括号里是日间 / 夜间）：普通 8、REGAL 26/27、MEDIUM 28/29、FAST 30/31、RAPIDLY（极速）32/33。没有单独设置的应用用 26，墨墨打现在就是 26。
 - 墨墨打写的编号：自动 0、极速 13（和 N10 一样写汉王“极速”的老编号，读回来是 32）、黑白 12。0 和 12 系统都照原样接受了。汉王自带输入法在点软键盘时也会写 0 或 15，所以 0 在这台上是有意义的模式。12 不在汉王的选项里，能不能用要看屏幕。
 - 和 N10 一样，应用回到前台约 150ms 后，SystemUI 会按应用设置再写一次模式。墨墨打拿回窗口焦点时、每次按键时会再确认一遍。实测：切到极速后打字是 32；按 Home 恢复成 26；回来后 SystemUI 先改成 26，随即被墨墨打改回 32。
@@ -137,8 +141,7 @@
 ### 识别方式
 
 - Rockchip 电子书固件：`persist.sys.rk-ebook=true` 或 `ro.rk.ebook_settings=true`，并且 `getSystemService("eink")` 不为空。
-- 汉王高通平台：`Build.BRAND=HANVON` 且 `Build.HARDWARE=qcom`（`MANUFACTURER` 是 QUALCOMM，不能用来认），并且 `getSystemService("eink")` 不为空。
-- 墨墨打只认上面这两种。其他设备即使有名为 eink 的服务，也不去调用。
+- 墨墨打只认这一种。其他设备即使有名为 eink 的服务，也不去调用。
 - Meebook：`MANUFACTURER=haoqing`，`MODEL` 为 m6、m6c、m7。
 - Boox：`MANUFACTURER` 或 `BRAND` 为 onyx。
 - 全志：`BRAND=allwinner`，`HARDWARE=sun8iw15p1`。

@@ -140,55 +140,9 @@ class ModeKeeperSystemModeTest {
 
 class RockchipModeCodeTest {
     @Test fun duDependsOnKernelBranch() {
-        assertEquals("13", EinkManagerEink.duCode("6.1.75"))
-        assertEquals("14", EinkManagerEink.duCode("4.19.232"))
-        assertNull(EinkManagerEink.duCode("5.10.110"))
-        assertNull(EinkManagerEink.duCode(""))
-    }
-}
-
-class EinkPlatformTest {
-    @Test fun rockchip() {
-        val p = EinkManagerEink.platform(rkEbook = true, brand = "HANVON", hardware = "rk30board", kernel = "6.1.75")!!
-        assertEquals("13", p.du)
-        assertEquals("sys.ebook.one_full_mode_timeline", p.fullFrameProp)
-    }
-
-    @Test fun hanvonQualcomm() {
-        val p = EinkManagerEink.platform(rkEbook = false, brand = "HANVON", hardware = "qcom", kernel = "5.15.153-android13-8")!!
-        assertEquals("13", p.du)
-        assertEquals("sys.eink.one_full_mode_timeline", p.fullFrameProp)
-    }
-
-    @Test fun othersUntouched() {
-        assertNull(EinkManagerEink.platform(rkEbook = false, brand = "HANVON", hardware = "mt6789", kernel = "5.15"))
-        assertNull(EinkManagerEink.platform(rkEbook = false, brand = "google", hardware = "qcom", kernel = "5.15"))
-        assertNull(EinkManagerEink.platform(rkEbook = false, brand = "onyx", hardware = "qcom", kernel = "4.19"))
-    }
-}
-
-class ModeKeeperRemapTest {
-    /** 汉王高通平台：setMode("13") 实际写的是 32，夜间模式是 33。 */
-    @Test fun systemRemapsCode() {
-        var mode = "26"
-        val writes = mutableListOf<String>()
-        val k = ModeKeeper({ mode }, { mode = if (it == "13") "32" else it; writes += it })
-        k.enter("13")
-        assertEquals("32", mode)
-        repeat(50) { k.enter("13") } // 每次按键
-        assertEquals(listOf("13"), writes)
-        k.leave()
-        assertEquals("26", mode)
-    }
-
-    @Test fun systemOverrideStillDetected() {
-        var mode = "26"
-        val k = ModeKeeper({ mode }, { mode = if (it == "13") "32" else it })
-        k.enter("13")
-        mode = "26" // 系统按应用设置又改回去了
-        k.enter("13")
-        assertEquals("32", mode)
-        k.leave()
-        assertEquals("26", mode)
+        assertEquals("13", RockchipEink.duCode("6.1.75"))
+        assertEquals("14", RockchipEink.duCode("4.19.232"))
+        assertNull(RockchipEink.duCode("5.10.110"))
+        assertNull(RockchipEink.duCode(""))
     }
 }
