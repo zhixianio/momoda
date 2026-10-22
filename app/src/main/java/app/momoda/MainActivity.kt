@@ -339,7 +339,9 @@ class MainActivity : Activity() {
         dirty = false
         val c = store.cursorOf(file)
         editor.setSelection(if (c in 0..editor.text.length) c else editor.text.length)
-        if (::vim.isInitialized) vim.afterExternalChange()
+        if (::vim.isInitialized) {
+            if (store.isEmptyDoc(editor.text.toString())) vim.startInsert() else vim.afterExternalChange()
+        }
         refreshChrome()
     }
 

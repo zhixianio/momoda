@@ -400,6 +400,11 @@ class Vim(
 
     private fun move(offset: Int) = editor.setSelection(offset.coerceIn(0, text.length))
 
+    /** 新的空文档：直接进入插入模式，接着写标题（普通模式下光标会停在“# ”的空格上）。 */
+    fun startInsert() {
+        if (enabled && mode != Mode.INSERT) setMode(Mode.INSERT)
+    }
+
     /**
      * 文字被 Vim 以外的地方换掉之后（换了文档、AI 替换、同步载入）：可视模式退回普通模式，
      * 选区的两端是旧文字里的位置，不能再用；普通模式下光标收到字上（存下来的位置可能是插入模式时的行尾）。
