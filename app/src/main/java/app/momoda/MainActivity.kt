@@ -339,6 +339,7 @@ class MainActivity : Activity() {
         dirty = false
         val c = store.cursorOf(file)
         editor.setSelection(if (c in 0..editor.text.length) c else editor.text.length)
+        if (::vim.isInitialized) vim.afterLoad()
         refreshChrome()
     }
 
@@ -469,7 +470,7 @@ class MainActivity : Activity() {
                 if (!doc.exists()) {
                     dirty = false
                     handler.removeCallbacks(saveRunnable)
-                    loadDoc(store.list().firstOrNull() ?: store.create())
+                    loadDoc(docAfterRemoving(doc))
                 }
             }
 
@@ -760,9 +761,14 @@ class MainActivity : Activity() {
         val victim = doc
         val title = Titles.titleOf(editor.text) ?: victim.nameWithoutExtension
         store.moveToTrash(victim)
-        loadDoc(store.list().firstOrNull() ?: store.create())
+        loadDoc(docAfterRemoving(victim))
         toast("已移到回收站：$title")
     }
+
+    /** 当前文档被删掉之后打开哪篇：删除前看的上一篇；没有的话最近修改的正文（不是 prompts.md）。 */
+    private fun docAfterRemoving(removed: File): File =
+        store.previousDocName?.let { File(store.dir, it) }?.takeIf { it.exists() && it != removed }
+            ?: store.mostRecent() ?: store.create()
 
     private fun wrap(marker: String) {
         val s = editor.selectionStart

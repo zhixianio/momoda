@@ -103,4 +103,18 @@ class VimTextTest {
         assertEquals("甲\n\n乙\n\n丙", t.substring(0, at) + text + t.substring(at))
         assertEquals(3, cursor)
     }
+
+    private fun paste(t: String, at: Int, content: String, after: Boolean): Pair<String, Int> {
+        val (i, text, cursor) = if (after) VimText.pasteLinesAfter(t, at, content) else VimText.pasteLinesBefore(t, at, content)
+        return (t.substring(0, i) + text + t.substring(i)) to cursor
+    }
+
+    @Test fun pasteListItemAfterStaysInList() =
+        assertEquals("- 甲\n- 乙\n- 乙\n\n丙" to 8, paste("- 甲\n- 乙\n\n丙", 4, "- 乙", after = true))
+
+    @Test fun pasteListItemBeforeStaysInList() =
+        assertEquals("- 乙\n- 甲\n- 乙" to 0, paste("- 甲\n- 乙", 0, "- 乙", after = false))
+
+    @Test fun pasteAfterLastListItemStaysInList() =
+        assertEquals("- 甲\n- 乙\n- 甲" to 8, paste("- 甲\n- 乙", 4, "- 甲", after = true))
 }

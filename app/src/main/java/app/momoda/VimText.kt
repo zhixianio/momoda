@@ -169,12 +169,25 @@ object VimText {
     /** p：在光标所在段后面另起一段，返回（插入位置，插入的文字，插完后光标位置）。 */
     fun pasteLinesAfter(t: CharSequence, at: Int, content: String): Triple<Int, String, Int> {
         val e = lineEnd(t, at)
-        return Triple(e, "\n\n$content", e + 2)
+        val sep = separatorAround(t, at)
+        return Triple(e, "$sep$content", e + sep.length)
     }
 
     /** P：在光标所在段前面另起一段。 */
     fun pasteLinesBefore(t: CharSequence, at: Int, content: String): Triple<Int, String, Int> {
         val s = lineStart(t, at)
-        return Triple(s, "$content\n\n", s)
+        return Triple(s, "$content${separatorAround(t, at)}", s)
+    }
+
+    /**
+     * 粘贴整行时用的分隔：光标所在行和上一行或下一行之间只隔一个换行（列表项、Shift+Enter 换的行）时也只用一个换行，
+     * 粘贴的行留在同一个列表里；否则空一行，另起一段。
+     */
+    private fun separatorAround(t: CharSequence, at: Int): String {
+        val s = lineStart(t, at)
+        val e = lineEnd(t, at)
+        val tightBelow = e + 1 < t.length && t[e] == '\n' && t[e + 1] != '\n'
+        val tightAbove = s >= 2 && t[s - 1] == '\n' && t[s - 2] != '\n'
+        return if (tightBelow || tightAbove) "\n" else "\n\n"
     }
 }

@@ -379,6 +379,11 @@ class Vim(
     private fun move(offset: Int) = editor.setSelection(offset.coerceIn(0, text.length))
 
     /** 左右移一个字符；落到段距空行上就再移一个（那一行只有 1/4 行高，不是能写字的地方）。 */
+    /** 换了一篇文档之后：normal 模式下光标收到字上（存下来的位置可能是插入模式时的行尾）。 */
+    fun afterLoad() {
+        if (enabled && mode == Mode.NORMAL) stayOnChar()
+    }
+
     /** normal 模式下光标停在字上，不停在行尾之后（空行除外），和 vim 一样。 */
     private fun stayOnChar() {
         val c = cursor

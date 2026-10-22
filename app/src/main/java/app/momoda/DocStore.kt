@@ -164,9 +164,12 @@ class DocStore(private val context: Context) {
 
     fun saveCursor(file: File, offset: Int) = prefs.edit().putInt("cursor:${file.name}", offset).apply()
 
+    /** 最近修改的一篇正文（不算 AI 指令文件 prompts.md）。 */
+    fun mostRecent(): File? = list().firstOrNull { it.name != Prompts.FILE_NAME }
+
     fun openLastOrCreate(): File {
         val file = lastDocName?.let { File(dir, it) }?.takeIf { it.exists() }
-            ?: list().firstOrNull()
+            ?: mostRecent()
             ?: (if (welcomed) null else createWelcome())
             ?: create()
         // 只有全新安装、目录里还没有文档时才放欢迎文档；已有文档的用户升级后也就此标记，删掉后不会再出现
