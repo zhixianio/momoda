@@ -915,7 +915,7 @@ class MainActivity : Activity() {
             SettingsPanel.Row("检查更新", { updates.latest?.let { "安装 ${it.version}" } ?: "当前 $versionName" }, {
                 val r = updates.latest
                 if (r != null) installUpdate(r) else checkForUpdates(force = true)
-            }, isToggle = true, hint = "按 Enter 或点这里"),
+            }, hint = "按 Enter 或点这里", isAction = true),
         )
         val version = packageManager.getPackageInfo(packageName, 0).versionName
         val footnote = buildString {
