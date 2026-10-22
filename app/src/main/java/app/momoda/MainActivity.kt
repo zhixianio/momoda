@@ -1118,7 +1118,7 @@ class MainActivity : Activity() {
         if (!force && !settings.autoUpdate) return
         updates.check(versionName, force) { release, error ->
             refreshChrome()
-            if (force) toast(error ?: release?.let { "有新版本 ${it.version}，在命令面板里选择“安装新版本”" } ?: "已经是最新版本 $versionName")
+            if (force) toast(error ?: release?.let { "有新版本 ${it.version}，在设置或命令面板里安装" } ?: "已经是最新版本 $versionName")
         }
     }
 
