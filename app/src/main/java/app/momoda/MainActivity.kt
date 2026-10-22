@@ -913,7 +913,7 @@ class MainActivity : Activity() {
             appendLine("外部字体：把 .ttf / .otf 放进 ${fonts.folder().absolutePath.removePrefix("/storage/emulated/0/")}")
             append("墨墨打 $version · GPL-3.0 开源 · momoda.zhixian.io")
         }
-        SettingsPanel(this, font, rows, footnote, onDismiss = ::returnToEditor).show()
+        openSettings = SettingsPanel(this, font, rows, footnote, onDismiss = { openSettings = null; returnToEditor() }).also { it.show() }
     }
 
     /** 墨水屏刷新的设置项；不能控制刷新的设备上没有。 */
@@ -1190,10 +1190,14 @@ class MainActivity : Activity() {
 
     // ---------- 更新 ----------
 
+    /** 正开着的设置页：检查更新的结果回来时刷新“检查更新”那一行。 */
+    private var openSettings: SettingsPanel? = null
+
     private fun checkForUpdates(force: Boolean) {
         if (!force && !settings.autoUpdate) return
         updates.check(versionName, force) { release, error ->
             refreshChrome()
+            openSettings?.refresh()
             if (force) toast(error ?: release?.let { "有新版本 ${it.version}，在设置或命令面板里安装" } ?: "已经是最新版本 $versionName")
         }
     }

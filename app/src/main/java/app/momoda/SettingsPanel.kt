@@ -200,6 +200,9 @@ class SettingsPanel(
         val row = rows[i]
         row.adjust?.invoke(delta) ?: return
         // 调整一项可能影响别的项（例如字体），全部刷新一下文字
-        rows.forEachIndexed { j, r -> valueViews[j].text = r.value() }
+        refresh()
     }
+
+    /** 重新读一遍每项的值。设置页开着时，后台的结果（例如检查更新）回来了也要更新显示。 */
+    fun refresh() = rows.forEachIndexed { j, r -> valueViews.getOrNull(j)?.text = r.value() }
 }
