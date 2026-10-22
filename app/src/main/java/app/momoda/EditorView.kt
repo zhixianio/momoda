@@ -24,7 +24,11 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.view.inputmethod.CompletionInfo
+import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputConnectionWrapper
 import android.widget.EditText
 import java.util.Locale
 import kotlin.math.abs
@@ -244,6 +248,35 @@ class EditorView(context: Context) : EditText(context) {
     /** 正在由我们自己改文字（整理引号、空格），这时的改动不再触发整理。 */
     private var typingApplying = false
 
+    /**
+     * 大于 0 时，文字改动来自用户输入：输入法上屏、按键打字、粘贴。只有这些才套 [TypingRules]；
+     * 撤销、重做、vim 的 p 和 .、AI 写回、从其他设备粘贴都是原样放回或程序写入，不能再补空格、换引号
+     * （撤销被改写后，重做的位置也会对不上）。
+     */
+    private var userInput = 0
+
+    private inline fun <T> asUserInput(block: () -> T): T {
+        userInput++
+        try { return block() } finally { userInput-- }
+    }
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        val ic = super.onCreateInputConnection(outAttrs) ?: return null
+        return object : InputConnectionWrapper(ic, false) {
+            override fun commitText(text: CharSequence?, newCursorPosition: Int) =
+                asUserInput { super.commitText(text, newCursorPosition) }
+            override fun setComposingText(text: CharSequence?, newCursorPosition: Int) =
+                asUserInput { super.setComposingText(text, newCursorPosition) }
+            override fun commitCompletion(text: CompletionInfo?) = asUserInput { super.commitCompletion(text) }
+            override fun commitCorrection(info: CorrectionInfo?) = asUserInput { super.commitCorrection(info) }
+            override fun sendKeyEvent(event: KeyEvent?) = asUserInput { super.sendKeyEvent(event) }
+        }
+    }
+
+    override fun onTextContextMenuItem(id: Int): Boolean =
+        if (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) asUserInput { super.onTextContextMenuItem(id) }
+        else super.onTextContextMenuItem(id)
+
     /** 对 [from, to) 套用 [TypingRules]：方括号键输入「」、中英文之间加空格。 */
     private fun applyTyping(s: Editable, from: Int, to: Int) {
         val typed = TypingRules.afterInsert(s, from, to.coerceAtMost(s.length), cornerQuotes, autoSpace) ?: return
@@ -289,7 +322,7 @@ class EditorView(context: Context) : EditText(context) {
         override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {
             markChange()
             insertedNewlineAt = if (before == 0 && count == 1 && s[start] == '\n') start else -1
-            if (!applying && !typingApplying && count > 0) { insertedFrom = start; insertedTo = start + count }
+            if (!applying && !typingApplying && count > 0 && userInput > 0) { insertedFrom = start; insertedTo = start + count }
             else if (!applying && !typingApplying) insertedFrom = -1
             // 还在等预编辑结束的那段：改动和它重叠就作废，改动在它前面就跟着平移
             if (pendingFrom >= 0) {
@@ -387,7 +420,7 @@ class EditorView(context: Context) : EditText(context) {
         val vertical = (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) &&
             !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed
         val x = if (vertical) layout?.let { it.getPrimaryHorizontal(selectionStart.coerceAtLeast(0)) } ?: 0f else 0f
-        val handled = postImeKeyHandler?.invoke(keyCode, event) == true || super.onKeyDown(keyCode, event)
+        val handled = postImeKeyHandler?.invoke(keyCode, event) == true || asUserInput { super.onKeyDown(keyCode, event) }
         if (handled && vertical) skipParagraphGap(if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) +1 else -1, x)
         return handled
     }

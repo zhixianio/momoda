@@ -1,6 +1,7 @@
 package app.momoda
 
 import android.view.KeyEvent
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.InputMethodManager
 
 /**
@@ -18,6 +19,11 @@ class Vim(
 ) {
 
     enum class Mode { INSERT, NORMAL, VISUAL, VISUAL_LINE }
+
+    private companion object {
+        /** 数字前缀的上限：误打一串数字（比如手机号）再接 j 或 p，不至于卡死或撑爆内存。 */
+        const val MAX_COUNT = 9999
+    }
 
     var enabled = false
         set(value) {
@@ -50,17 +56,25 @@ class Vim(
         // 例外是 Esc 的抬起，它的按下刚交给了输入法，抬起也给它，保持成对。
         // Esc 在 normal 模式下取消输了一半的命令（d、数字前缀等）
         if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
-            if (event.action == KeyEvent.ACTION_DOWN) { reset(); if (mode != Mode.NORMAL) setMode(Mode.NORMAL) }
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                reset(); keys.clear(); changed = false
+                if (mode != Mode.NORMAL) setMode(Mode.NORMAL)
+            }
             return event.action == KeyEvent.ACTION_DOWN
         }
         if (event.action != KeyEvent.ACTION_DOWN) return true
+        // 单独按下的 Shift、Alt 等不是命令：不然 d 之后按 Shift（为了打 $、G）会把 d 取消掉
+        if (KeyEvent.isModifierKey(keyCode)) return true
         if (event.isCtrlPressed && keyCode == KeyEvent.KEYCODE_R) {
             editor.onKeyShortcut(KeyEvent.KEYCODE_Z, ctrlShift(event, KeyEvent.KEYCODE_Z))
             return true
         }
         // 忽略大写锁定：不小心开了 CapsLock，hjkl 会变成 HJKL，整个 normal 模式就像失灵了。大写命令照常用 Shift
         val ch = event.getUnicodeChar(event.metaState and KeyEvent.META_CAPS_LOCK_ON.inv()).toChar()
-        if (mode == Mode.VISUAL || mode == Mode.VISUAL_LINE) visual(ch, event) else command(ch, event)
+        if (mode == Mode.VISUAL || mode == Mode.VISUAL_LINE) {
+            // 可视模式里的修改不记给 . 重复；别让它的 changed 漏到下一条普通命令上
+            visual(ch, event); keys.clear(); changed = false
+        } else command(ch, event)
         if (mode == Mode.NORMAL) stayOnChar()
         return true
     }
@@ -97,7 +111,10 @@ class Vim(
     private fun finishInsertRecording() {
         val s = insertStart
         insertStart = -1
-        val c = cursor
+        var c = cursor
+        // 还没上屏的拼音（输入法随后会清掉）不算打的字
+        val composing = BaseInputConnection.getComposingSpanStart(text)
+        if (composing in s until c) c = composing
         if (s in 0..c && c <= text.length) lastInserted = text.subSequence(s, c).toString()
     }
 
@@ -140,6 +157,8 @@ class Vim(
     }
 
     private fun showSelection() {
+        anchor = anchor.coerceIn(0, text.length)
+        head = head.coerceIn(0, text.length)
         val r = selection()
         if (r.linewise) editor.setSelection(r.innerStart, r.innerEnd) else editor.setSelection(r.start, r.end)
         // 把光标那一端翻进屏幕
@@ -147,7 +166,7 @@ class Vim(
     }
 
     private fun visual(ch: Char, event: KeyEvent) {
-        if (ch in '1'..'9' || (ch == '0' && count > 0)) { count = count * 10 + (ch - '0'); return }
+        if (ch in '1'..'9' || (ch == '0' && count > 0)) { count = (count * 10 + (ch - '0')).coerceAtMost(MAX_COUNT); return }
         val n = count.coerceAtLeast(1)
         count = 0
         val p = pending
@@ -178,7 +197,7 @@ class Vim(
     private inline fun visualMove(n: Int, step: () -> Unit) {
         val saved = mode
         mode = Mode.NORMAL
-        editor.setSelection(head)
+        editor.setSelection(head.coerceIn(0, text.length))
         count = if (n > 1) n else 0
         step()
         count = 0
@@ -207,10 +226,13 @@ class Vim(
         }
     }
 
-    private fun findNext(forward: Boolean) {
-        if (lastSearch.isEmpty()) return
+    /** 找下一个；找不到时提示并返回 false。 */
+    private fun findNext(forward: Boolean): Boolean {
+        if (lastSearch.isEmpty()) return false
         val at = VimText.find(text, lastSearch, cursor, forward)
-        if (at < 0) toast("找不到“$lastSearch”") else move(at)
+        if (at < 0) { toast("找不到“$lastSearch”"); return false }
+        move(at)
+        return true
     }
 
     // ---------- normal 模式：数字前缀、操作符（d c y）+ 动作或文本对象 ----------
@@ -233,7 +255,7 @@ class Vim(
         val t = text
         val c = cursor
         // 数字前缀：单独的 0 是“到行首”
-        if (ch in '1'..'9' || (ch == '0' && count > 0)) { count = count * 10 + (ch - '0'); return }
+        if (ch in '1'..'9' || (ch == '0' && count > 0)) { count = (count * 10 + (ch - '0')).coerceAtMost(MAX_COUNT); return }
         val n = count.coerceAtLeast(1)
         count = 0
 
@@ -264,8 +286,8 @@ class Vim(
             ch == 'V' -> enterVisual(Mode.VISUAL_LINE)
             ch == '/' -> search(forward = true)
             ch == '?' -> search(forward = false)
-            ch == 'n' -> repeat(n) { findNext(lastSearchForward) }
-            ch == 'N' -> repeat(n) { findNext(!lastSearchForward) }
+            ch == 'n' -> for (i in 0 until n) if (!findNext(lastSearchForward)) break
+            ch == 'N' -> for (i in 0 until n) if (!findNext(!lastSearchForward)) break
             ch == 'd' || ch == 'c' || ch == 'y' -> { operator = ch; operatorCount = n }
             ch == 'D' -> apply('d', VimText.Range(c, VimText.lineEnd(t, c)))
             ch == 'C' -> apply('c', VimText.Range(c, VimText.lineEnd(t, c)))
@@ -378,10 +400,23 @@ class Vim(
 
     private fun move(offset: Int) = editor.setSelection(offset.coerceIn(0, text.length))
 
-    /** 左右移一个字符；落到段距空行上就再移一个（那一行只有 1/4 行高，不是能写字的地方）。 */
-    /** 换了一篇文档之后：normal 模式下光标收到字上（存下来的位置可能是插入模式时的行尾）。 */
-    fun afterLoad() {
-        if (enabled && mode == Mode.NORMAL) stayOnChar()
+    /** 新的空文档：直接进入插入模式，接着写标题（普通模式下光标会停在“# ”的空格上）。 */
+    fun startInsert() {
+        if (enabled && mode != Mode.INSERT) setMode(Mode.INSERT)
+    }
+
+    /**
+     * 文字被 Vim 以外的地方换掉之后（换了文档、AI 替换、同步载入）：可视模式退回普通模式，
+     * 选区的两端是旧文字里的位置，不能再用；普通模式下光标收到字上（存下来的位置可能是插入模式时的行尾）。
+     */
+    fun afterExternalChange() {
+        if (!enabled) return
+        if (mode == Mode.VISUAL || mode == Mode.VISUAL_LINE) {
+            head = editor.selectionStart.coerceIn(0, text.length)
+            anchor = head
+            setMode(Mode.NORMAL)
+        }
+        if (mode == Mode.NORMAL) stayOnChar()
     }
 
     /** normal 模式下光标停在字上，不停在行尾之后（空行除外），和 vim 一样。 */
@@ -390,6 +425,7 @@ class Vim(
         if (c > 0 && (c == text.length || text[c] == '\n') && text[c - 1] != '\n') move(c - 1)
     }
 
+    /** 左右移一个字符；落到段距空行上就再移一个（那一行只有 1/4 行高，不是能写字的地方）。 */
     private fun moveChar(delta: Int) {
         move(cursor + delta)
         if (VimText.isGapLineStart(text, cursor)) move(cursor + delta)

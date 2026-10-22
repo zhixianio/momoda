@@ -205,6 +205,14 @@ object CommandGrid {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 addView(search, LinearLayout.LayoutParams(0, -2, 1f))
+                // 标明这几个是“最近常用”：会随使用变化，和下面固定的分组不是一回事
+                if (frequent.isNotEmpty()) addView(TextView(context).apply {
+                    text = "常用"
+                    setTextColor(Color.rgb(0x77, 0x77, 0x77))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    this.typeface = typeface
+                    setPadding(px(16), 0, px(2), 0)
+                }, LinearLayout.LayoutParams(-2, -2))
                 frequent.forEachIndexed { i, item ->
                     val v = LinearLayout(context).apply {
                         orientation = LinearLayout.VERTICAL

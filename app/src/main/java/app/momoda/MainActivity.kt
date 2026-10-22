@@ -387,7 +387,9 @@ class MainActivity : Activity() {
         dirty = false
         val c = store.cursorOf(file)
         editor.setSelection(if (c in 0..editor.text.length) c else editor.text.length)
-        if (::vim.isInitialized) vim.afterLoad()
+        if (::vim.isInitialized) {
+            if (store.isEmptyDoc(editor.text.toString())) vim.startInsert() else vim.afterExternalChange()
+        }
         refreshChrome()
     }
 
@@ -795,6 +797,7 @@ class MainActivity : Activity() {
     private fun hideSoftKeyboardIfHardware() {
         if (hasHardKeyboard()) editor.post {
             getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(editor.windowToken, 0)
+            softKeyboardShown = false
         }
     }
 
@@ -1012,6 +1015,7 @@ class MainActivity : Activity() {
                         if (editor.text.subSequence(start, end).toString() == target) {
                             editor.text.replace(start, end, result)
                             editor.setSelection((start + result.length).coerceAtMost(editor.text.length))
+                            vim.afterExternalChange()
                         } else toast("原文已经变了，没有替换")
                     },
                     onInsert = { result ->
@@ -1019,6 +1023,7 @@ class MainActivity : Activity() {
                         val insert = if (hasSelection) result else "\n\n$result"
                         editor.text.insert(at, insert)
                         editor.setSelection((at + insert.length).coerceAtMost(editor.text.length))
+                        vim.afterExternalChange()
                     },
                     onDismiss = ::returnToEditor,
                 ).show()
@@ -1042,6 +1047,7 @@ class MainActivity : Activity() {
                 val at = editor.selectionEnd.coerceIn(0, editor.text.length)
                 editor.text.insert(at, text)
                 editor.setSelection((at + text.length).coerceAtMost(editor.text.length))
+                vim.afterExternalChange()
                 applied += "正文 ${TextStats.format(TextStats.wordCount(text))} 字"
             }
             toast("已收到：${applied.joinToString("、")}")
@@ -1180,10 +1186,10 @@ class MainActivity : Activity() {
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    /** 联网后：上次因为离线没同步成，就补一次。 */
+    /** 联网后：上次因为离线没同步成，就补一次（没开自动同步时，“离线”也只会来自手动同步，同样补上）。 */
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            handler.post { if (syncStatus == "离线") autoSync(minIntervalMs = 0) }
+            handler.post { if (syncStatus == "离线" && sync.configured) syncNow(force = false) }
         }
     }
 
