@@ -100,58 +100,6 @@ class ModeKeeperTest {
     }
 }
 
-class GhostCleanerTest {
-
-    @Test fun noCleanWithoutChanges() {
-        val g = GhostCleaner(10_000)
-        g.onKey(0)
-        assertNull(g.waitMs(0))
-    }
-
-    @Test fun fewEditsNotWorthAFlash() {
-        val g = GhostCleaner(10_000)
-        repeat(GhostCleaner.MIN_DIRT - 1) { g.onEdit(it.toLong()) }
-        assertNull(g.waitMs(100_000))
-    }
-
-    @Test fun cleansAfterIdle() {
-        val g = GhostCleaner(10_000)
-        repeat(10) { g.onEdit(1_000L + it) }
-        assertEquals(10_000L - 1, g.waitMs(1_010))
-        assertFalse(g.due(5_000, composing = false))
-        assertTrue(g.due(11_009, composing = false))
-        g.onFullRefresh()
-        assertNull(g.waitMs(20_000))
-    }
-
-    @Test fun keyPressRestartsTimer() {
-        val g = GhostCleaner(10_000)
-        repeat(10) { g.onEdit(0) }
-        g.onKey(8_000) // 输入法拼写中的按键，文字没变
-        assertFalse(g.due(10_000, composing = false))
-        assertTrue(g.due(18_000, composing = false))
-    }
-
-    @Test fun neverWhileComposing() {
-        val g = GhostCleaner(5_000)
-        repeat(10) { g.onEdit(0) }
-        assertFalse(g.due(60_000, composing = true))
-        assertTrue(g.due(60_000, composing = false))
-    }
-
-    @Test fun pageTurnAloneIsEnough() {
-        val g = GhostCleaner(5_000)
-        g.onPage(0)
-        assertEquals(5_000L, g.waitMs(0))
-    }
-
-    @Test fun disabled() {
-        val g = GhostCleaner(0)
-        g.onPage(0)
-        assertNull(g.waitMs(100_000))
-    }
-}
-
 class ModeKeeperRepeatTest {
     @Test fun repeatedEnterWritesStoreOnce() {
         var mode = "13"
@@ -196,47 +144,5 @@ class RockchipModeCodeTest {
         assertEquals("14", RockchipEink.duCode("4.19.232"))
         assertNull(RockchipEink.duCode("5.10.110"))
         assertNull(RockchipEink.duCode(""))
-    }
-}
-
-class TransientModeTest {
-    private var mode: String? = "13"
-    private val writes = mutableListOf<String>()
-    private val t = TransientMode({ mode }, { mode = it; writes += it })
-
-    @Test fun switchesAndRestores() {
-        t.begin("3")
-        assertTrue(t.active)
-        assertEquals("3", mode)
-        t.finish()
-        assertFalse(t.active)
-        assertEquals("13", mode)
-        assertEquals(listOf("3", "13"), writes)
-    }
-
-    @Test fun secondBeginKeepsFirstPrevious() {
-        t.begin("3")
-        t.begin("4") // 上一次还没换回来又清了一次
-        t.finish()
-        assertEquals("13", mode)
-    }
-
-    @Test fun doesNotClobberOthersChange() {
-        t.begin("3")
-        mode = "7" // 用户在下拉菜单里改了
-        t.finish()
-        assertEquals("7", mode)
-    }
-
-    @Test fun finishWithoutBeginIsHarmless() {
-        t.finish()
-        assertTrue(writes.isEmpty())
-    }
-
-    @Test fun unreadableModeDoesNothing() {
-        mode = null
-        t.begin("3")
-        assertFalse(t.active)
-        assertTrue(writes.isEmpty())
     }
 }

@@ -91,10 +91,8 @@ class MainActivity : Activity() {
             handler.postDelayed(this, (60 - now.get(Calendar.SECOND)) * 1000L + 50)
         }
     }
-    /** 墨水屏刷新控制（打字时的刷新模式、停笔清残影）；非墨水屏设备上什么都不做。 */
+    /** 墨水屏刷新控制（打字时的刷新模式、手动全刷）；非墨水屏设备上什么都不做。 */
     private val eink by lazy { Eink.detect(this) }
-    private val ghost by lazy { GhostCleaner(settings.ghostCleanMs) }
-    private val ghostRunnable = Runnable { cleanGhosts() }
     private var resumed = false
     private var dirty = false
     /** 最近一次保存失败的原因；保存成功后清空。页脚会一直提示，直到保存成功。 */
@@ -162,16 +160,8 @@ class MainActivity : Activity() {
                 // 页脚字数和页眉标题在停止打字 2 秒后才更新，避免每个字都让页眉页脚变化
                 handler.removeCallbacks(footerRunnable)
                 handler.postDelayed(footerRunnable, 2000)
-                ghost.onEdit(SystemClock.uptimeMillis())
-                scheduleGhostClean()
             }
         })
-        editor.onScroll = {
-            ghost.onPage(SystemClock.uptimeMillis())
-            scheduleGhostClean()
-        }
-        // 翻页这一帧本来就整屏重画：在它画出来之前换好清残影的波形，合成一次刷新
-        editor.onPageJump = { if (settings.cleanOnRedraw) refreshScreen() }
 
         // 先拿焦点再载入文档：编辑器还没排版时获得焦点，系统会把光标挪到文末（ArrowKeyMovementMethod.onTakeFocus），
         // 冷启动就回不到上次的光标位置
@@ -308,7 +298,6 @@ class MainActivity : Activity() {
         resumed = false
         // 离开墨墨打：先把系统的刷新模式改回去，别的 App 不受影响
         eink.leave()
-        handler.removeCallbacks(ghostRunnable)
         handler.removeCallbacks(clockRunnable)
         save()
         // 离开 App 也算“离开文档”：文件名跟上标题
@@ -329,31 +318,11 @@ class MainActivity : Activity() {
             hideSystemBars()
             // 系统下拉菜单、汉王的按应用刷新设置可能在我们之后改了模式：拿回焦点时再设一次
             if (resumed) eink.enter(settings.typingRefresh)
-            scheduleGhostClean()
         }
     }
 
-    // ---------- 墨水屏 ----------
-
-    private fun scheduleGhostClean() {
-        handler.removeCallbacks(ghostRunnable)
-        if (eink.vendor == null) return
-        ghost.waitMs(SystemClock.uptimeMillis())?.let { handler.postDelayed(ghostRunnable, it) }
-    }
-
-    /** 停笔清残影：到点时没在拼写、窗口在前台（没有弹窗）才全刷；否则等下一次按键重新计时。 */
-    private fun cleanGhosts() {
-        val composing = android.view.inputmethod.BaseInputConnection.getComposingSpanStart(editor.text) >= 0
-        if (!hasWindowFocus() || !ghost.due(SystemClock.uptimeMillis(), composing)) return
-        refreshScreen()
-    }
-
-    /** 按设置里的方式清一次残影。 */
-    private fun refreshScreen() {
-        handler.removeCallbacks(ghostRunnable)
-        eink.clean(editor, settings.cleanStyle)
-        ghost.onFullRefresh()
-    }
+    /** 全刷一次（GC16，会闪），清掉残影。Ctrl+Shift+E 或命令面板手动触发。 */
+    private fun refreshScreen() = eink.fullRefresh(editor)
 
     /** 系统状态栏一直隐藏；页眉页脚由 App 自己画（DESIGN §3.1）。 */
     private fun hideSystemBars() {
@@ -372,14 +341,11 @@ class MainActivity : Activity() {
 
     /** 切换到另一篇文档：先“离开”当前文档（保存、改名、清理空文档）。 */
     private fun open(file: File) {
-        val switching = ::doc.isInitialized && file != doc
-        if (switching) {
+        if (::doc.isInitialized && file != doc) {
             val left = leaveCurrent()
             if (left != null) store.previousDocName = left.name
         }
         loadDoc(file)
-        // 换文档时整屏本来就要重画：在新文档画出来之前换好清残影的波形，合成一次刷新
-        if (switching && (settings.cleanOnRedraw || settings.ghostCleanMs > 0 && ghost.dirt > 0)) refreshScreen()
     }
 
     private fun loadDoc(file: File) {
@@ -580,13 +546,8 @@ class MainActivity : Activity() {
     // ---------- 按键 ----------
 
     private fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
-        // 任何按键（包括输入法拼写中、文字还没变的按键）都推迟清残影
         // 系统（汉王的按应用刷新设置）会在我们回到前台后再改一次模式：打字时确认一下，代价只是读一个系统属性
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            eink.enter(settings.typingRefresh)
-            ghost.onKey(SystemClock.uptimeMillis())
-            scheduleGhostClean()
-        }
+        if (event.action == KeyEvent.ACTION_DOWN) eink.enter(settings.typingRefresh)
         if (event.action == KeyEvent.ACTION_UP && consumedDowns.remove(keyCode)) return true
         // 大写锁定的状态跟着每个按键带过来：变了就在页脚标出来，并提示一次（Zen 模式下看不到页脚）
         if (event.isCapsLockOn != capsLockOn) {
@@ -785,8 +746,6 @@ class MainActivity : Activity() {
      * 否则有的输入法（汉王）会继续往已经关掉的弹窗里上屏，表现为“光标消失、字不知去向”。
      */
     private fun returnToEditor() {
-        // 面板窗口移走以后再清：太早的话清的那一帧里面板还在，移走它的那次刷新又是快速波形
-        if (settings.cleanOnRedraw && eink.vendor != null) handler.postDelayed({ if (hasWindowFocus()) refreshScreen() }, 200)
         editor.requestFocus()
         getSystemService(InputMethodManager::class.java).restartInput(editor)
         hideSoftKeyboardIfHardware()
@@ -935,22 +894,8 @@ class MainActivity : Activity() {
                 settings.typingRefresh = step(eink.typingModes, settings.typingRefresh, d)
                 eink.enter(settings.typingRefresh)
             }, hint = "离开时恢复系统设置"),
-            SettingsPanel.Row("停笔后清残影", { ghostLabel(settings.ghostCleanMs) }, { d ->
-                settings.ghostCleanMs = step(GhostCleaner.DELAYS, settings.ghostCleanMs, d)
-                ghost.delayMs = settings.ghostCleanMs
-                scheduleGhostClean()
-            }, hint = "Ctrl+Shift+E 手动清"),
-            SettingsPanel.Row("清残影方式", { settings.cleanStyle.label }, { d ->
-                settings.cleanStyle = step(eink.cleanStyles, settings.cleanStyle, d)
-                refreshScreen() // 换了就刷一次，马上看到效果
-            }, hint = "换一种就清一次"),
-            SettingsPanel.Row("翻页、换文档时清残影", { if (settings.cleanOnRedraw) "开" else "关" }, {
-                settings.cleanOnRedraw = !settings.cleanOnRedraw
-            }, isToggle = true, hint = "和重画合成一次"),
         )
     }
-
-    private fun ghostLabel(ms: Long) = if (ms <= 0) "关" else "${ms / 1000} 秒"
 
     private fun paragraphLabel(r: Float) = when (r) {
         0f -> "无"
@@ -964,7 +909,7 @@ class MainActivity : Activity() {
         val desc = with(settings) {
             "字体=${font.ifEmpty { "内置" }} 字号=$textSize 行距=$lineSpacing 段距=$paragraphSpacing 版心=$charsPerLine " +
                 "缩进=$indent 页眉页脚=$chrome 专注=$focus vim=$vim 自动更新=$autoUpdate 存储=${if (store.isPublic) "Documents" else "私有目录"} " +
-                "打字刷新=$typingRefresh 清残影=${ghostCleanMs}ms 方式=$cleanStyle 重画时清=$cleanOnRedraw\n${eink.describe()}"
+                "打字刷新=$typingRefresh\n${eink.describe()}"
         }
         runCatching { Diagnostics.export(this, store.dir, desc) }
             .onSuccess { toast("已导出：${it.absolutePath.removePrefix("/storage/emulated/0/")}") }

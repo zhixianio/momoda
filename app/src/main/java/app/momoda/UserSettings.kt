@@ -68,21 +68,6 @@ class UserSettings(context: Context) {
         get() = runCatching { TypingRefresh.valueOf(prefs.getString("typingRefresh", null) ?: "") }.getOrDefault(TypingRefresh.SYSTEM)
         set(v) = prefs.edit().putString("typingRefresh", v.name).apply()
 
-    /** 停笔多久后全刷一次清残影；0 表示关（默认：全刷会整屏闪一下，打断写作，想要的人自己打开）。 */
-    var ghostCleanMs: Long
-        get() = prefs.getLong("ghostCleanMs", 0L)
-        set(v) = prefs.edit().putLong("ghostCleanMs", v).apply()
-
-    /** 清残影用哪种波形：全刷（会闪）或几种全屏灰阶（不翻转）。 */
-    var cleanStyle: CleanStyle
-        get() = runCatching { CleanStyle.valueOf(prefs.getString("cleanStyle", null) ?: "") }.getOrDefault(CleanStyle.FULL)
-        set(v) = prefs.edit().putString("cleanStyle", v.name).apply()
-
-    /** 翻页、换文档、关掉面板这些本来就整屏重画的时候，顺手清残影。 */
-    var cleanOnRedraw: Boolean
-        get() = prefs.getBoolean("cleanOnRedraw", false)
-        set(v) = prefs.edit().putBoolean("cleanOnRedraw", v).apply()
-
     var autoUpdate: Boolean
         get() = prefs.getBoolean("autoUpdate", true)
         set(v) = prefs.edit().putBoolean("autoUpdate", v).apply()
