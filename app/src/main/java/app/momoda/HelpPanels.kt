@@ -63,6 +63,7 @@ class HelpPanel(
         "Ctrl+1 2 3" to "标题，Ctrl+0 正文", "Ctrl+= / -" to "字号",
         "Shift+Enter" to "换行不分段", "PageUp / Down" to "翻页",
         "Ctrl+Shift+K" to "显示 / 收起软键盘", "Ctrl+Shift+D" to "调试面板",
+        "Ctrl+Shift+E" to "清除残影（墨水屏）",
     )
 
     fun show() {

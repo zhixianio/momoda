@@ -60,6 +60,16 @@ class UserSettings(context: Context) {
         set(v) = prefs.edit().putString("scrollMode", v.name).apply()
 
 
+    /** 打字时墨水屏用哪种刷新（只在能控制刷新的设备上生效，离开墨墨打时恢复）。 */
+    var typingRefresh: TypingRefresh
+        get() = runCatching { TypingRefresh.valueOf(prefs.getString("typingRefresh", null) ?: "") }.getOrDefault(TypingRefresh.AUTO)
+        set(v) = prefs.edit().putString("typingRefresh", v.name).apply()
+
+    /** 停笔多久后全刷一次清残影；0 表示关。 */
+    var ghostCleanMs: Long
+        get() = prefs.getLong("ghostCleanMs", 10_000L)
+        set(v) = prefs.edit().putLong("ghostCleanMs", v).apply()
+
     var autoUpdate: Boolean
         get() = prefs.getBoolean("autoUpdate", true)
         set(v) = prefs.edit().putBoolean("autoUpdate", v).apply()

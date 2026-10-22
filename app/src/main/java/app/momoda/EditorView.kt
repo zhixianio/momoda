@@ -44,6 +44,8 @@ class EditorView(context: Context) : EditText(context) {
     /** 输入法没有消费的按键（例如没在拼写时的 Esc）。 */
     var postImeKeyHandler: ((Int, KeyEvent) -> Boolean)? = null
     var onSelectionChange: ((Int, Int) -> Unit)? = null
+    /** 内容上下滚动了（翻页、跟着光标滚一行）：墨水屏上整屏都重画了一遍。 */
+    var onScroll: (() -> Unit)? = null
 
     var charsPerLine = 30
         set(value) { if (field != value) { field = value; updatePadding() } }
@@ -639,6 +641,7 @@ class EditorView(context: Context) : EditText(context) {
 
     override fun onScrollChanged(horiz: Int, vert: Int, oldHoriz: Int, oldVert: Int) {
         super.onScrollChanged(horiz, vert, oldHoriz, oldVert)
+        if (vert != oldVert) onScroll?.invoke()
         if (BuildConfig.DEBUG && vert != oldVert) {
             // 诊断用（只在 debug 包里）：记录是谁触发了滚动
             val by = Throwable().stackTrace.drop(1)

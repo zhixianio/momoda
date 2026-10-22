@@ -91,6 +91,11 @@ class MainActivity : Activity() {
             handler.postDelayed(this, (60 - now.get(Calendar.SECOND)) * 1000L + 50)
         }
     }
+    /** 墨水屏刷新控制（打字时的刷新模式、停笔清残影）；非墨水屏设备上什么都不做。 */
+    private val eink by lazy { Eink.detect(this) }
+    private val ghost by lazy { GhostCleaner(settings.ghostCleanMs) }
+    private val ghostRunnable = Runnable { cleanGhosts() }
+    private var resumed = false
     private var dirty = false
     /** 最近一次保存失败的原因；保存成功后清空。页脚会一直提示，直到保存成功。 */
     private var saveError: String? = null
@@ -109,8 +114,9 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val tStart = SystemClock.uptimeMillis()
         Diagnostics.install(this) {
-            // 崩溃前尽量把正在写的内容存下来
+            // 崩溃前尽量把正在写的内容存下来，并把系统的刷新模式改回去
             if (::doc.isInitialized && dirty) store.write(doc, editor.text.toString())
+            eink.leave()
         }
         if (BuildConfig.DEBUG) intent.getStringExtra("githubApi")?.let {
             // debug 包：用本地模拟的 GitHub API 测试同步
@@ -156,8 +162,14 @@ class MainActivity : Activity() {
                 // 页脚字数和页眉标题在停止打字 2 秒后才更新，避免每个字都让页眉页脚变化
                 handler.removeCallbacks(footerRunnable)
                 handler.postDelayed(footerRunnable, 2000)
+                ghost.onEdit(SystemClock.uptimeMillis())
+                scheduleGhostClean()
             }
         })
+        editor.onScroll = {
+            ghost.onPage(SystemClock.uptimeMillis())
+            scheduleGhostClean()
+        }
 
         // 先拿焦点再载入文档：编辑器还没排版时获得焦点，系统会把光标挪到文末（ArrowKeyMovementMethod.onTakeFocus），
         // 冷启动就回不到上次的光标位置
@@ -273,6 +285,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
+        eink.enter(settings.typingRefresh)
         hideSystemBars()
         hideSoftKeyboardIfHardware()
         handler.post(clockRunnable)
@@ -289,6 +303,10 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        resumed = false
+        // 离开墨墨打：先把系统的刷新模式改回去，别的 App 不受影响
+        eink.leave()
+        handler.removeCallbacks(ghostRunnable)
         handler.removeCallbacks(clockRunnable)
         save()
         // 离开 App 也算“离开文档”：文件名跟上标题
@@ -305,7 +323,34 @@ class MainActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) hideSystemBars()
+        if (hasFocus) {
+            hideSystemBars()
+            // 系统下拉菜单、汉王的按应用刷新设置可能在我们之后改了模式：拿回焦点时再设一次
+            if (resumed) eink.enter(settings.typingRefresh)
+            scheduleGhostClean()
+        }
+    }
+
+    // ---------- 墨水屏 ----------
+
+    private fun scheduleGhostClean() {
+        handler.removeCallbacks(ghostRunnable)
+        if (eink.vendor == null) return
+        ghost.waitMs(SystemClock.uptimeMillis())?.let { handler.postDelayed(ghostRunnable, it) }
+    }
+
+    /** 停笔清残影：到点时没在拼写、窗口在前台（没有弹窗）才全刷；否则等下一次按键重新计时。 */
+    private fun cleanGhosts() {
+        val composing = android.view.inputmethod.BaseInputConnection.getComposingSpanStart(editor.text) >= 0
+        if (!hasWindowFocus() || !ghost.due(SystemClock.uptimeMillis(), composing)) return
+        refreshScreen()
+    }
+
+    /** 全刷一次，清掉残影。 */
+    private fun refreshScreen() {
+        handler.removeCallbacks(ghostRunnable)
+        eink.fullRefresh(editor)
+        ghost.onFullRefresh()
     }
 
     /** 系统状态栏一直隐藏；页眉页脚由 App 自己画（DESIGN §3.1）。 */
@@ -325,11 +370,14 @@ class MainActivity : Activity() {
 
     /** 切换到另一篇文档：先“离开”当前文档（保存、改名、清理空文档）。 */
     private fun open(file: File) {
-        if (::doc.isInitialized && file != doc) {
+        val switching = ::doc.isInitialized && file != doc
+        if (switching) {
             val left = leaveCurrent()
             if (left != null) store.previousDocName = left.name
         }
         loadDoc(file)
+        // 换文档时整屏本来就要重画：有残影要清的话就在这时全刷，省得之后再闪一次
+        if (switching && settings.ghostCleanMs > 0 && ghost.dirt > 0) editor.post { refreshScreen() }
     }
 
     private fun loadDoc(file: File) {
@@ -528,6 +576,13 @@ class MainActivity : Activity() {
     // ---------- 按键 ----------
 
     private fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+        // 任何按键（包括输入法拼写中、文字还没变的按键）都推迟清残影
+        // 系统（汉王的按应用刷新设置）会在我们回到前台后再改一次模式：打字时确认一下，代价只是读一个系统属性
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            eink.enter(settings.typingRefresh)
+            ghost.onKey(SystemClock.uptimeMillis())
+            scheduleGhostClean()
+        }
         if (event.action == KeyEvent.ACTION_UP && consumedDowns.remove(keyCode)) return true
         // 大写锁定的状态跟着每个按键带过来：变了就在页脚标出来，并提示一次（Zen 模式下看不到页脚）
         if (event.isCapsLockOn != capsLockOn) {
@@ -599,6 +654,7 @@ class MainActivity : Activity() {
             keyCode == KeyEvent.KEYCODE_D && shift -> { toggleDebug(); "调试面板" }
             keyCode == KeyEvent.KEYCODE_V && shift -> { toggleVim(); "vim 开关" }
             keyCode == KeyEvent.KEYCODE_F && shift -> { toggleFocus(); "专注模式" }
+            keyCode == KeyEvent.KEYCODE_E && shift -> { refreshScreen(); "清除残影" }
             keyCode == KeyEvent.KEYCODE_R && vim.enabled && vim.mode == Vim.Mode.NORMAL -> {
                 vim.handle(keyCode, e); "vim 重做"
             }
@@ -650,6 +706,7 @@ class MainActivity : Activity() {
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
         add(Command("capslock", "CapsLock 映射", "改成 Ctrl", ::showCapsLockGuide))
         add(Command("help", "帮助", "Ctrl+/ · 快捷键、诊断", ::showHelp))
+        if (eink.vendor != null) add(Command("refresh", "清除残影", "Ctrl+Shift+E · 全刷一次", ::refreshScreen))
         if (!store.isPublic) add(Command("access", "授权存储", "存到 Documents/momoda", ::requestStorageAccess))
         updates.latest?.let { r -> add(Command("install-update", "安装 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
         // 软键盘（Ctrl+Shift+K）、调试面板（Ctrl+Shift+D）、延迟测量（Ctrl+Shift+L）只留快捷键，见帮助
@@ -818,9 +875,10 @@ class MainActivity : Activity() {
         footerNotes.typeface = tf
     }
 
+    private fun <T> step(list: List<T>, now: T, d: Int): T = list[(list.indexOf(now).coerceAtLeast(0) + d).coerceIn(0, list.size - 1)]
+
     private fun showSettings() {
         save()
-        fun <T> step(list: List<T>, now: T, d: Int): T = list[(list.indexOf(now).coerceAtLeast(0) + d).coerceIn(0, list.size - 1)]
         fun onOff(b: Boolean) = if (b) "开" else "关"
         val rows = listOf(
             SettingsPanel.Row("字体", { fonts.available().firstOrNull { it.key == settings.font }?.label ?: fonts.builtIn.label }, { d ->
@@ -845,6 +903,7 @@ class MainActivity : Activity() {
             SettingsPanel.Row("Zen 模式", { onOff(!settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true, hint = "隐藏页眉页脚 · Ctrl+."),
             SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true, hint = "只突出当前段落 · Ctrl+Shift+F"),
             SettingsPanel.Row("Vim 模式", { onOff(settings.vim) }, { settings.vim = !settings.vim; applySettings() }, isToggle = true, hint = "Ctrl+Shift+V"),
+            *einkRows().toTypedArray(),
             SettingsPanel.Row("自动检查更新", { onOff(settings.autoUpdate) }, { settings.autoUpdate = !settings.autoUpdate }, isToggle = true),
             SettingsPanel.Row("检查更新", { updates.latest?.let { "安装 ${it.version}" } ?: "当前 $versionName" }, {
                 val r = updates.latest
@@ -861,6 +920,24 @@ class MainActivity : Activity() {
         SettingsPanel(this, font, rows, footnote, onDismiss = ::returnToEditor).show()
     }
 
+    /** 墨水屏刷新的设置项；不能控制刷新的设备上没有。 */
+    private fun einkRows(): List<SettingsPanel.Row> {
+        if (eink.vendor == null) return emptyList()
+        return listOf(
+            SettingsPanel.Row("打字时刷新", { settings.typingRefresh.label }, { d ->
+                settings.typingRefresh = step(eink.typingModes, settings.typingRefresh, d)
+                eink.enter(settings.typingRefresh)
+            }, hint = "离开时恢复系统设置"),
+            SettingsPanel.Row("停笔后清残影", { ghostLabel(settings.ghostCleanMs) }, { d ->
+                settings.ghostCleanMs = step(GhostCleaner.DELAYS, settings.ghostCleanMs, d)
+                ghost.delayMs = settings.ghostCleanMs
+                scheduleGhostClean()
+            }, hint = "全刷一次（会闪） · Ctrl+Shift+E"),
+        )
+    }
+
+    private fun ghostLabel(ms: Long) = if (ms <= 0) "关" else "${ms / 1000} 秒"
+
     private fun paragraphLabel(r: Float) = when (r) {
         0f -> "无"
         0.25f -> "1/4 行"
@@ -872,7 +949,8 @@ class MainActivity : Activity() {
     private fun exportDiagnostics() {
         val desc = with(settings) {
             "字体=${font.ifEmpty { "内置" }} 字号=$textSize 行距=$lineSpacing 段距=$paragraphSpacing 版心=$charsPerLine " +
-                "缩进=$indent 页眉页脚=$chrome 专注=$focus vim=$vim 自动更新=$autoUpdate 存储=${if (store.isPublic) "Documents" else "私有目录"}"
+                "缩进=$indent 页眉页脚=$chrome 专注=$focus vim=$vim 自动更新=$autoUpdate 存储=${if (store.isPublic) "Documents" else "私有目录"} " +
+                "打字刷新=$typingRefresh 清残影=${ghostCleanMs}ms\n${eink.describe()}"
         }
         runCatching { Diagnostics.export(this, store.dir, desc) }
             .onSuccess { toast("已导出：${it.absolutePath.removePrefix("/storage/emulated/0/")}") }
