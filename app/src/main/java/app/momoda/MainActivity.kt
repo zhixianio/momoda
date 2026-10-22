@@ -170,6 +170,8 @@ class MainActivity : Activity() {
             ghost.onPage(SystemClock.uptimeMillis())
             scheduleGhostClean()
         }
+        // 翻页这一帧本来就整屏重画：在它画出来之前换好清残影的波形，合成一次刷新
+        editor.onPageJump = { if (settings.cleanOnRedraw) refreshScreen() }
 
         // 先拿焦点再载入文档：编辑器还没排版时获得焦点，系统会把光标挪到文末（ArrowKeyMovementMethod.onTakeFocus），
         // 冷启动就回不到上次的光标位置
@@ -346,10 +348,10 @@ class MainActivity : Activity() {
         refreshScreen()
     }
 
-    /** 全刷一次，清掉残影。 */
+    /** 按设置里的方式清一次残影。 */
     private fun refreshScreen() {
         handler.removeCallbacks(ghostRunnable)
-        eink.fullRefresh(editor)
+        eink.clean(editor, settings.cleanStyle)
         ghost.onFullRefresh()
     }
 
@@ -376,8 +378,8 @@ class MainActivity : Activity() {
             if (left != null) store.previousDocName = left.name
         }
         loadDoc(file)
-        // 换文档时整屏本来就要重画：有残影要清的话就在这时全刷，省得之后再闪一次
-        if (switching && settings.ghostCleanMs > 0 && ghost.dirt > 0) editor.post { refreshScreen() }
+        // 换文档时整屏本来就要重画：在新文档画出来之前换好清残影的波形，合成一次刷新
+        if (switching && (settings.cleanOnRedraw || settings.ghostCleanMs > 0 && ghost.dirt > 0)) refreshScreen()
     }
 
     private fun loadDoc(file: File) {
@@ -708,7 +710,7 @@ class MainActivity : Activity() {
         add(Command("settings", "设置", "Ctrl+,", ::showSettings))
         add(Command("capslock", "CapsLock 映射", "改成 Ctrl", ::showCapsLockGuide))
         add(Command("help", "帮助", "Ctrl+/ · 快捷键、诊断", ::showHelp))
-        if (eink.vendor != null) add(Command("refresh", "清除残影", "Ctrl+Shift+E · 全刷一次", ::refreshScreen))
+        if (eink.vendor != null) add(Command("refresh", "清除残影", "Ctrl+Shift+E", ::refreshScreen))
         if (!store.isPublic) add(Command("access", "授权存储", "存到 Documents/momoda", ::requestStorageAccess))
         updates.latest?.let { r -> add(Command("install-update", "安装 ${r.version}", "从 GitHub 下载") { installUpdate(r) }) }
         // 软键盘（Ctrl+Shift+K）、调试面板（Ctrl+Shift+D）、延迟测量（Ctrl+Shift+L）只留快捷键，见帮助
@@ -783,6 +785,8 @@ class MainActivity : Activity() {
      * 否则有的输入法（汉王）会继续往已经关掉的弹窗里上屏，表现为“光标消失、字不知去向”。
      */
     private fun returnToEditor() {
+        // 面板窗口移走以后再清：太早的话清的那一帧里面板还在，移走它的那次刷新又是快速波形
+        if (settings.cleanOnRedraw && eink.vendor != null) handler.postDelayed({ if (hasWindowFocus()) refreshScreen() }, 200)
         editor.requestFocus()
         getSystemService(InputMethodManager::class.java).restartInput(editor)
         hideSoftKeyboardIfHardware()
@@ -935,7 +939,14 @@ class MainActivity : Activity() {
                 settings.ghostCleanMs = step(GhostCleaner.DELAYS, settings.ghostCleanMs, d)
                 ghost.delayMs = settings.ghostCleanMs
                 scheduleGhostClean()
-            }, hint = "全刷一次（会闪） · Ctrl+Shift+E"),
+            }, hint = "Ctrl+Shift+E 手动清"),
+            SettingsPanel.Row("清残影方式", { settings.cleanStyle.label }, { d ->
+                settings.cleanStyle = step(eink.cleanStyles, settings.cleanStyle, d)
+                refreshScreen() // 换了就刷一次，马上看到效果
+            }, hint = "换一种就清一次，方便对比"),
+            SettingsPanel.Row("翻页、换文档时清残影", { if (settings.cleanOnRedraw) "开" else "关" }, {
+                settings.cleanOnRedraw = !settings.cleanOnRedraw
+            }, isToggle = true, hint = "和整屏重画合成一次"),
         )
     }
 
@@ -953,7 +964,7 @@ class MainActivity : Activity() {
         val desc = with(settings) {
             "字体=${font.ifEmpty { "内置" }} 字号=$textSize 行距=$lineSpacing 段距=$paragraphSpacing 版心=$charsPerLine " +
                 "缩进=$indent 页眉页脚=$chrome 专注=$focus vim=$vim 自动更新=$autoUpdate 存储=${if (store.isPublic) "Documents" else "私有目录"} " +
-                "打字刷新=$typingRefresh 清残影=${ghostCleanMs}ms\n${eink.describe()}"
+                "打字刷新=$typingRefresh 清残影=${ghostCleanMs}ms 方式=$cleanStyle 重画时清=$cleanOnRedraw\n${eink.describe()}"
         }
         runCatching { Diagnostics.export(this, store.dir, desc) }
             .onSuccess { toast("已导出：${it.absolutePath.removePrefix("/storage/emulated/0/")}") }
