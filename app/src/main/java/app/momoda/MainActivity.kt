@@ -147,6 +147,7 @@ class MainActivity : Activity() {
         applySettings()
 
         editor.preImeKeyHandler = ::onKeyPreIme
+        watchSoftKeyboard()
         editor.postImeKeyHandler = ::onKeyPostIme
         editor.onLatency = { if (debug.visibility == View.VISIBLE) refreshDebug() }
         editor.addTextChangedListener(object : TextWatcher {
@@ -701,7 +702,7 @@ class MainActivity : Activity() {
     }
 
     private fun showCapsLockGuide() {
-        CapsLockGuide(this, font, onOpenSystem = {
+        CapsLockGuide(this, font, hasKeyboard = ::hasHardKeyboard, onOpenSystem = {
             openSystemSettings(Settings.ACTION_HARD_KEYBOARD_SETTINGS, "Settings\$PhysicalKeyboardActivity")
         }, onDismiss = ::returnToEditor).show()
     }
@@ -752,29 +753,50 @@ class MainActivity : Activity() {
     }
 
     /** 接着实体键盘：用不到软键盘。系统有时在重新连接输入法时把它叫出来，这里收起。 */
-    private fun hasHardKeyboard(): Boolean = resources.configuration.let {
-        it.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
-            it.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
-    }
+    private fun hasHardKeyboard(): Boolean = HardKeyboard.connected(this)
 
     private fun hideSoftKeyboardIfHardware() {
-        if (hasHardKeyboard()) editor.post {
-            getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(editor.windowToken, 0)
-            softKeyboardShown = false
+        if (hasHardKeyboard()) editor.post { hideSoftKeyboard() }
+    }
+
+    /** 用户自己用 Ctrl+Shift+K 叫出了软键盘：这时接着实体键盘也不自动收起。 */
+    private var softKeyboardWanted = false
+    private var lastAutoHide = 0L
+
+    private fun hideSoftKeyboard() {
+        softKeyboardWanted = false
+        getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(editor.windowToken, 0)
+        // 输入法自己要求显示的（例如 fcitx5 的某些设置下）光靠上面一句收不起来，再从窗口这边收一次
+        if (Build.VERSION.SDK_INT >= 30) window.insetsController?.hide(WindowInsets.Type.ime())
+    }
+
+    /**
+     * 接着实体键盘时，软键盘一出现就收起（Android 11 起才能知道它什么时候出现）。
+     * 1.5 秒内最多收一次：输入法坚持要显示时不和它来回抢。
+     */
+    private fun watchSoftKeyboard() {
+        if (Build.VERSION.SDK_INT < 30) return
+        window.decorView.setOnApplyWindowInsetsListener { v, insets ->
+            val now = SystemClock.uptimeMillis()
+            if (insets.isVisible(WindowInsets.Type.ime()) && !softKeyboardWanted && now - lastAutoHide > 1500 && hasHardKeyboard()) {
+                lastAutoHide = now
+                v.post { hideSoftKeyboard() }
+            }
+            v.onApplyWindowInsets(insets)
         }
     }
 
-    private var softKeyboardShown = false
-
     /** Ctrl+Shift+K：显示或收起软键盘（实体键盘上没有别的办法收起它）。 */
     private fun toggleSoftKeyboard() {
-        val imm = getSystemService(InputMethodManager::class.java)
-        // Android 11 起可以直接问系统软键盘在不在；更早的系统按上次自己切换的结果来
-        val shown = if (Build.VERSION.SDK_INT >= 30) editor.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) ?: false
-        else softKeyboardShown
-        softKeyboardShown = !shown
-        if (shown) imm.hideSoftInputFromWindow(editor.windowToken, 0)
-        else { editor.requestFocus(); imm.showSoftInput(editor, InputMethodManager.SHOW_FORCED) }
+        // 系统说开着，或者是我们自己打开的，都算开着：有的输入法的窗口系统不算作软键盘，只看系统会一直以为是关着的
+        val visible = Build.VERSION.SDK_INT >= 30 && editor.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
+        if (visible || softKeyboardWanted) {
+            hideSoftKeyboard()
+        } else {
+            softKeyboardWanted = true
+            editor.requestFocus()
+            getSystemService(InputMethodManager::class.java).showSoftInput(editor, InputMethodManager.SHOW_FORCED)
+        }
     }
 
     private fun deleteDoc() {

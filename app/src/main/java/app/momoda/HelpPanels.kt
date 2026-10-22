@@ -120,6 +120,8 @@ class HelpPanel(
 class CapsLockGuide(
     private val context: Context,
     private val typeface: Typeface?,
+    /** 现在有没有接着实体键盘：没接时系统的“实体键盘”设置页一打开就自己关掉，什么也看不到。 */
+    private val hasKeyboard: () -> Boolean,
     private val onOpenSystem: () -> Unit,
     private val onDismiss: () -> Unit,
 ) {
@@ -127,6 +129,17 @@ class CapsLockGuide(
         val c = context
         lateinit var dialog: Dialog
         lateinit var open: TextView
+        // 没接键盘时的提示；接上、拔掉键盘时跟着变
+        val status = c.panelText("", 15f, Color.BLACK, typeface).apply {
+            this.typeface = Typeface.create(typeface, Typeface.BOLD)
+            setPadding(0, c.px(10), 0, 0)
+        }
+        fun refreshStatus(emphasize: Boolean = false) {
+            val missing = !hasKeyboard()
+            status.text = if (!missing) "" else if (emphasize) "还没接上实体键盘：先用线或蓝牙接上键盘，再点“打开系统设置”。"
+            else "现在没接实体键盘。系统只在接着键盘时才显示这个设置，请先接上键盘。"
+            status.visibility = if (missing) View.VISIBLE else View.GONE
+        }
         val box = c.inkBox().apply {
             addView(c.panelText("CapsLock 映射", 18f, Color.BLACK, typeface).apply { setPadding(0, 0, 0, c.px(8)) })
             addView(c.panelText(
@@ -142,16 +155,27 @@ class CapsLockGuide(
                     "常用的几种输入方式（例如双拼和英文）都要各选一次。",
                 15f, Color.rgb(0x44, 0x44, 0x44), typeface,
             ).apply { setPadding(0, c.px(10), 0, 0) })
+            addView(status)
             addView(LinearLayout(c).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(0, c.px(16), 0, 0)
-                open = c.focusButton("打开系统设置", typeface) { dialog.dismiss(); onOpenSystem() }
+                open = c.focusButton("打开系统设置", typeface) {
+                    if (hasKeyboard()) { dialog.dismiss(); onOpenSystem() } else refreshStatus(emphasize = true)
+                }
                 addView(open)
                 addView(View(c), LinearLayout.LayoutParams(0, 1, 1f))
                 addView(c.focusButton("关闭", typeface) { dialog.dismiss() })
             })
         }
-        dialog = c.showPanel(box, onDismiss)
+        refreshStatus()
+        val inputManager = c.getSystemService(android.hardware.input.InputManager::class.java)
+        val listener = object : android.hardware.input.InputManager.InputDeviceListener {
+            override fun onInputDeviceAdded(id: Int) = refreshStatus()
+            override fun onInputDeviceRemoved(id: Int) = refreshStatus()
+            override fun onInputDeviceChanged(id: Int) = refreshStatus()
+        }
+        inputManager?.registerInputDeviceListener(listener, null)
+        dialog = c.showPanel(box) { inputManager?.unregisterInputDeviceListener(listener); onDismiss() }
         dialog.show()
         // 默认停在“打开系统设置”上：按 Enter 就去
         open.post { open.requestFocus() }
