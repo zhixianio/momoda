@@ -69,9 +69,9 @@ class SettingsPanel(
         list.addView(TextView(context).apply {
             text = "设置"
             setTextColor(Color.BLACK)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             this.typeface = typeface
-            setPadding(px(8), 0, px(8), px(12))
+            setPadding(px(8), 0, px(8), px(10))
         })
 
         rows.forEachIndexed { i, row -> list.addView(rowView(i, row), LinearLayout.LayoutParams(-1, -2)) }
@@ -79,7 +79,7 @@ class SettingsPanel(
         list.addView(TextView(context).apply {
             text = footnote
             setTextColor(Color.rgb(0x77, 0x77, 0x77))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             this.typeface = typeface
             setPadding(px(8), px(16), px(8), 0)
             setLineSpacing(0f, 1.4f)
@@ -105,7 +105,8 @@ class SettingsPanel(
             clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             setWindowAnimations(0)
             val w = context.resources.displayMetrics.widthPixels
-            setLayout(max(px(380), (w * 0.42f).toInt()).coerceAtMost(w), WindowManager.LayoutParams.MATCH_PARENT)
+            // 左边露出正文，调整时能看到效果；再窄的话，名字和说明就挤成好几行
+            setLayout(max(px(420), (w * 0.42f).toInt()).coerceAtMost(w), WindowManager.LayoutParams.MATCH_PARENT)
             setGravity(Gravity.END or Gravity.TOP)
         }
         dialog.show()
@@ -121,12 +122,14 @@ class SettingsPanel(
             this.typeface = typeface
             gravity = Gravity.CENTER_VERTICAL
         }
-        val label: View = if (row.hint.isEmpty()) text(row.label, 17f, Color.BLACK) else LinearLayout(context).apply {
+        // 名字和说明各占一行，放不下就省略，不折行把这一行撑高
+        fun oneLine(v: TextView) = v.apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        val label: View = if (row.hint.isEmpty()) oneLine(text(row.label, 15f, Color.BLACK)) else LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            addView(text(row.label, 17f, Color.BLACK))
-            addView(text(row.hint, 12f, Color.rgb(0x77, 0x77, 0x77)))
+            addView(oneLine(text(row.label, 15f, Color.BLACK)))
+            addView(oneLine(text(row.hint, 11.5f, Color.rgb(0x77, 0x77, 0x77))).apply { setPadding(0, px(1), 0, 0) })
         }
-        val value = text(row.value(), 16f, Color.BLACK).apply {
+        val value = text(row.value(), 14f, Color.BLACK).apply {
             gravity = Gravity.CENTER
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -135,12 +138,12 @@ class SettingsPanel(
         val line = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = px(56)
-            setPadding(px(8), 0, px(4), 0)
-            addView(label, LinearLayout.LayoutParams(0, -2, 1f))
+            minimumHeight = px(50)
+            setPadding(px(8), px(4), px(4), px(4))
+            addView(label, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = px(8) })
             if (row.adjust != null && !row.isToggle) {
                 addView(button("−") { select(i); adjust(i, -1) })
-                addView(value, LinearLayout.LayoutParams(px(132), -2))
+                addView(value, LinearLayout.LayoutParams(px(96), -2))
                 addView(button("＋") { select(i); adjust(i, +1) })
             } else {
                 addView(value, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = px(12) })
@@ -154,10 +157,10 @@ class SettingsPanel(
     private fun button(label: String, onClick: () -> Unit) = TextView(context).apply {
         text = label
         setTextColor(Color.BLACK)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
         typeface = this@SettingsPanel.typeface
         gravity = Gravity.CENTER
-        layoutParams = LinearLayout.LayoutParams(px(48), px(48))
+        layoutParams = LinearLayout.LayoutParams(px(40), px(40))
         background = GradientDrawable().apply { setColor(Color.WHITE); setStroke(1, Color.rgb(0x99, 0x99, 0x99)) }
         setOnClickListener { onClick() }
     }
