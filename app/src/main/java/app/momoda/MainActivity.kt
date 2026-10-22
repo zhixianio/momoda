@@ -943,10 +943,10 @@ class MainActivity : Activity() {
             SettingsPanel.Row("清残影方式", { settings.cleanStyle.label }, { d ->
                 settings.cleanStyle = step(eink.cleanStyles, settings.cleanStyle, d)
                 refreshScreen() // 换了就刷一次，马上看到效果
-            }, hint = "换一种就清一次，方便对比"),
+            }, hint = "换一种就清一次"),
             SettingsPanel.Row("翻页、换文档时清残影", { if (settings.cleanOnRedraw) "开" else "关" }, {
                 settings.cleanOnRedraw = !settings.cleanOnRedraw
-            }, isToggle = true, hint = "和整屏重画合成一次"),
+            }, isToggle = true, hint = "和重画合成一次"),
         )
     }
 
