@@ -189,3 +189,12 @@ class ModeKeeperSystemModeTest {
         assertEquals(0, writes)
     }
 }
+
+class RockchipModeCodeTest {
+    @Test fun duDependsOnKernelBranch() {
+        assertEquals("13", RockchipEink.duCode("6.1.75"))
+        assertEquals("14", RockchipEink.duCode("4.19.232"))
+        assertNull(RockchipEink.duCode("5.10.110"))
+        assertNull(RockchipEink.duCode(""))
+    }
+}

@@ -110,12 +110,13 @@ class RockchipEink private constructor(
 ) : EinkController {
 
     override val vendor = "${Build.MANUFACTURER} ${Build.MODEL}（Rockchip）"
-    override val typingModes = listOf(TypingRefresh.SYSTEM, TypingRefresh.AUTO, TypingRefresh.DU, TypingRefresh.A2)
+    private val du = duCode(System.getProperty("os.version").orEmpty())
+    override val typingModes = listOfNotNull(TypingRefresh.SYSTEM, TypingRefresh.AUTO, if (du != null) TypingRefresh.DU else null, TypingRefresh.A2)
 
     private fun code(mode: TypingRefresh): String? = when (mode) {
         TypingRefresh.SYSTEM -> null
         TypingRefresh.AUTO -> EPD_AUTO
-        TypingRefresh.DU -> EPD_DU
+        TypingRefresh.DU -> du ?: EPD_AUTO
         TypingRefresh.A2 -> EPD_A2
     }
 
@@ -145,10 +146,23 @@ class RockchipEink private constructor(
     override fun describe() = "墨水屏接口：$vendor EinkManager，当前模式 ${currentMode()}，全刷${if (sendOneFullFrame != null) "可用" else "不可用"}"
 
     companion object {
-        // 模式编号见 Rockchip 电子书 SDK 文档（docs/eink-sdk.md）：2 全刷 GC16，7 普通局刷 GC16
+        // 模式编号见 docs/eink-sdk.md。AUTO、A2 在各内核分支都一样；DU 不一样：
+        // 内核 6.1 是 13（汉王 N10 Pro 实测，“极速”就是它），4.19 是 14（13 在那里是 A2_DITHER）。
+        // 框架里 EinkManager.EinkMode 的常量是旧的 4.19 编号，和 6.1 内核对不上，不能拿来用
         const val EPD_AUTO = "0"
         const val EPD_A2 = "12"
-        const val EPD_DU = "13"
+
+        /** 按内核版本（os.version，例如 "6.1.75"）给出 DU 的编号；认不出的内核返回 null，不提供这个选项。 */
+        fun duCode(kernel: String): String? {
+            val parts = kernel.split('.', '-')
+            val major = parts.getOrNull(0)?.toIntOrNull() ?: return null
+            val minor = parts.getOrNull(1)?.toIntOrNull() ?: return null
+            return when {
+                major == 4 && minor == 19 -> "14"
+                major == 6 && minor == 1 -> "13"
+                else -> null
+            }
+        }
         private const val FULL_FRAME_PROP = "sys.ebook.one_full_mode_timeline"
 
         fun create(context: Context): RockchipEink? {
