@@ -47,4 +47,9 @@ class PaletteLayoutTest {
     @Test fun usesRoundTrip() = assertEquals(mapOf("a" to 3, "b" to 1), PaletteLayout.parseUses(PaletteLayout.formatUses(mapOf("a" to 3, "b" to 1))))
 
     @Test fun badUsesIgnored() = assertEquals(mapOf("a" to 3), PaletteLayout.parseUses("a:3,,b,c:x"))
+
+    @Test fun moveInEmptyColumnStays() {
+        assertEquals(0 to 0, PaletteLayout.move(listOf(0), 0, 0, 0, +1))
+        assertEquals(0 to 0, PaletteLayout.move(listOf(0), 0, 0, 0, -1))
+    }
 }

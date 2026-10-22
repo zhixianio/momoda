@@ -66,7 +66,10 @@ object PaletteLayout {
             if (c !in sizes.indices) return col to row
             return c to row.coerceAtMost(sizes[c] - 1)
         }
-        return col to (row + dRow).coerceIn(0, sizes[col] - 1)
+        // 这一列是空的（筛选没有结果）：哪也不去
+        val size = sizes.getOrElse(col) { 0 }
+        if (size == 0) return col to 0
+        return col to (row + dRow).coerceIn(0, size - 1)
     }
 
     /** 使用次数存成 `id:次数,id:次数`。 */
