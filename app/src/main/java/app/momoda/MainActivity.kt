@@ -546,9 +546,13 @@ class MainActivity : Activity() {
 
     // ---------- 按键 ----------
 
+    /** 正按着的、已经执行过的我们自己的快捷键（见 [onKeyPreIme]）。 */
+    private val ownShortcutDowns = mutableSetOf<Int>()
+
     private fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
         // 系统（汉王的按应用刷新设置）会在我们回到前台后再改一次模式：打字时确认一下，代价只是读一个系统属性
         if (event.action == KeyEvent.ACTION_DOWN) eink.enter(settings.typingRefresh)
+        if (event.action == KeyEvent.ACTION_UP) ownShortcutDowns -= keyCode
         if (event.action == KeyEvent.ACTION_UP && consumedDowns.remove(keyCode)) return true
         // 大写锁定的状态跟着每个按键带过来：变了就在页脚标出来，并提示一次（Zen 模式下看不到页脚）
         if (event.isCapsLockOn != capsLockOn) {
@@ -562,7 +566,11 @@ class MainActivity : Activity() {
         val ctrl = event.isCtrlPressed || event.isMetaPressed
         if (ctrl && isShortcutKey(keyCode)) {
             if (event.action == KeyEvent.ACTION_DOWN) {
-                val name = runShortcut(keyCode, event)
+                // 按住不放时系统会重复发按下事件：我们自己的快捷键（多是开关）只在第一次执行，
+                // 否则按得稍久一点，Zen、Vim、软键盘就会开了又关；撤销这类系统快捷键照常重复
+                if (event.repeatCount > 0 && keyCode in ownShortcutDowns) return true
+                val name = if (event.repeatCount == 0) runShortcut(keyCode, event) else null
+                if (name != null) ownShortcutDowns += keyCode
                 KeyLog.add(event, name ?: "系统快捷键")
                 if (name == null) editor.onKeyShortcut(keyCode, asCtrl(event))
                 consumedDowns += keyCode
