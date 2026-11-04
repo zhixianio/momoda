@@ -91,7 +91,8 @@ class HelpPanel(
                 }
             }
             addView(grid)
-            addView(c.panelText("Vim 模式下 Esc 进入普通模式，i 回到插入；dw、dd、yy、p、v、/、f、~ 等照常用。f, 跳到下一个“，”，f. 跳到“。”。", 13f,
+            addView(c.panelText("Vim 模式下 Esc 进入普通模式，i 回到插入；dw、dd、yy、p、v、/、f、r、J、~ 等照常用。( ) 按句、{ } 按段移动，" +
+                "cis 改一句、dap 删一段、ci\" 改“”里的话；f, 跳到下一个“，”。", 13f,
                 Color.rgb(0x77, 0x77, 0x77), typeface).apply { setPadding(0, c.px(8), 0, 0) })
             addView(LinearLayout(c).apply {
                 orientation = LinearLayout.HORIZONTAL

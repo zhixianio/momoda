@@ -206,6 +206,15 @@ object VimText {
     fun matches(c: Char, target: Char): Boolean = c == target || fullWidth[target]?.contains(c) == true
 
     /**
+     * r 换成什么：光标处是中文标点时，英文标点键换成对应的中文标点（在“，”上按 r. 得到“。”）；
+     * 其他情况原样（在字母上按 r, 就是英文逗号）。
+     */
+    fun replacementFor(old: Char, typed: Char): Char {
+        val cjk = fullWidth[typed] ?: return typed
+        return if (fullWidth.values.any { old in it }) cjk[0] else typed
+    }
+
+    /**
      * 从 [from] 往后（[forward]）或往前找本段里第 [n] 个 [target]，返回光标该停的位置；找不到返回 null。
      * [till] 是 t / T：停在那个字前面（往前找时是后面）。[repeat] 是 ; 和 , 重复 t / T：
      * 光标正好紧挨着目标时跳过它，找下一个，否则会原地不动。
@@ -231,5 +240,186 @@ object VimText {
     /** ~：大小写互换（只影响有大小写的字母，汉字、标点不变）。 */
     fun toggleCase(s: CharSequence): String = buildString(s.length) {
         for (c in s) append(if (c.isUpperCase()) c.lowercaseChar() else if (c.isLowerCase()) c.uppercaseChar() else c)
+    }
+
+    // ---------- ( )：句子 ----------
+
+    /** 句末标点；英文句点只在后面是空白或行尾时算（3.14、e.g. 里的不算）。 */
+    private fun endsSentence(t: CharSequence, i: Int, lineEnd: Int): Boolean = when (t[i]) {
+        '。', '！', '？', '!', '?', '…' -> true
+        '.' -> i + 1 >= lineEnd || t[i + 1] == ' '
+        else -> false
+    }
+
+    /** 跟在句末标点后面、还算这一句的：后引号、后括号。 */
+    private const val CLOSERS = "”’」』）)》】\"'"
+
+    /** 一句：[start, innerEnd) 是这句话，[innerEnd, end) 是后面的空格。 */
+    private class Sentence(val start: Int, val innerEnd: Int, val end: Int)
+
+    /** 逻辑行 [s, e) 里的句子（一段的结尾也是一句的结尾）。 */
+    private fun sentencesIn(t: CharSequence, s: Int, e: Int): List<Sentence> {
+        val out = mutableListOf<Sentence>()
+        var i = s
+        while (i < e && t[i] == ' ') i++
+        while (i < e) {
+            val start = i
+            var j = i
+            while (j < e && !endsSentence(t, j, e)) j++
+            if (j < e) {
+                j++
+                while (j < e && (endsSentence(t, j, e) || t[j] in CLOSERS)) j++ // “？！”“……”“。」”
+            }
+            val innerEnd = j
+            while (j < e && t[j] == ' ') j++
+            out += Sentence(start, innerEnd, j)
+            i = j
+        }
+        return out
+    }
+
+    /** ) ：下一句的开头；这一段没有了就是下一段的第一句；到头了是文末。 */
+    fun nextSentenceStart(t: CharSequence, at: Int): Int {
+        val s = lineStart(t, at)
+        val e = lineEnd(t, at)
+        sentencesIn(t, s, e).firstOrNull { it.start > at }?.let { return it.start }
+        var i = e
+        while (i < t.length && t[i] == '\n') i++
+        if (i >= t.length) return lineEnd(t, lastLineStart(t)) // 最后一句：到文末（普通模式下光标再收到最后一个字上）
+        while (i < t.length && t[i] == ' ') i++
+        return i
+    }
+
+    /** ( ：这一句的开头；已经在句首时是上一句的开头（可以跨到上一段）。 */
+    fun prevSentenceStart(t: CharSequence, at: Int): Int {
+        val s = lineStart(t, at)
+        sentencesIn(t, s, lineEnd(t, at)).lastOrNull { it.start < at }?.let { return it.start }
+        var i = s - 1
+        while (i >= 0 && t[i] == '\n') i--
+        if (i < 0) return 0
+        val ps = lineStart(t, i)
+        return sentencesIn(t, ps, lineEnd(t, ps)).lastOrNull()?.start ?: ps
+    }
+
+    /** is / as：光标所在的句子（as 连同后面的空格）。 */
+    fun sentenceObject(t: CharSequence, at: Int, around: Boolean): Range? {
+        val s = lineStart(t, at)
+        val all = sentencesIn(t, s, lineEnd(t, at))
+        val one = all.firstOrNull { at >= it.start && at < it.end } ?: all.lastOrNull() ?: return null
+        return Range(one.start, if (around) one.end else one.innerEnd)
+    }
+
+    // ---------- { }：段落（连续的有字的行；列表算一整段） ----------
+
+    /** [at] 所在的段落 [start, end)（不含结尾的换行）；[at] 在空行上时返回 null。 */
+    fun paragraphAt(t: CharSequence, at: Int): IntRange? {
+        val ls = lineStart(t, at)
+        if (lineEnd(t, at) == ls) return null
+        var start = ls
+        while (start >= 2 && t[start - 1] == '\n' && t[start - 2] != '\n') start = lineStart(t, start - 1)
+        var end = lineEnd(t, at)
+        while (end + 1 < t.length && t[end] == '\n' && t[end + 1] != '\n') end = lineEnd(t, end + 1)
+        return start until end
+    }
+
+    /** } ：下一段的开头；已经是最后一段时到这一段末尾。 */
+    fun nextParagraphStart(t: CharSequence, at: Int): Int {
+        var i = paragraphAt(t, at)?.let { it.last + 1 } ?: at
+        val end = i
+        while (i < t.length && t[i] == '\n') i++
+        return if (i >= t.length) end.coerceAtMost(t.length) else i
+    }
+
+    /** { ：这一段的开头；已经在段首时是上一段的开头。 */
+    fun prevParagraphStart(t: CharSequence, at: Int): Int {
+        val here = paragraphAt(t, at)
+        if (here != null && at > here.first) return here.first
+        var i = (here?.first ?: at) - 1
+        while (i >= 0 && t[i] == '\n') i--
+        if (i < 0) return 0
+        return paragraphAt(t, i)?.first ?: 0
+    }
+
+    /** ip / ap：光标所在的段落；ap 连同段落分隔（和 dd 一样，删掉不留多余空行）。 */
+    fun paragraphObject(t: CharSequence, at: Int, around: Boolean): Range? {
+        val p = paragraphAt(t, at) ?: return null
+        return if (around) linesBetween(t, p.first, p.last + 1) else Range(p.first, p.last + 1)
+    }
+
+    // ---------- i( a( i" a" i「 等：括号、引号里面 ----------
+
+    /**
+     * 普通模式下打不出中文括号引号：英文的也匹配对应的中文的，取包着光标的最里面那一对。
+     * 例如 `ci"` 改“”里的话，`di[` 删「」或【】里的，`ya(` 连（）一起复制。
+     */
+    private fun pairsFor(key: Char): List<String> = when (key) {
+        '(', ')', 'b' -> listOf("()", "（）")
+        '[', ']' -> listOf("[]", "「」", "【】")
+        '{', '}', 'B' -> listOf("{}", "『』")
+        '<', '>' -> listOf("<>", "《》", "〈〉")
+        '"' -> listOf("\"\"", "“”")
+        '\'' -> listOf("''", "‘’")
+        else -> emptyList()
+    }
+
+    fun isPairKey(key: Char) = pairsFor(key).isNotEmpty()
+
+    /** 包着 [at] 的一对括号或引号，只在本段里找；i 是里面，a 连括号一起。找不到返回 null。 */
+    fun pairObject(t: CharSequence, at: Int, key: Char, around: Boolean): Range? {
+        val s = lineStart(t, at)
+        val e = lineEnd(t, at)
+        var best: Pair<Int, Int>? = null
+        for (pair in pairsFor(key)) {
+            val (open, close) = pair[0] to pair[1]
+            val found = if (open == close) sameCharPair(t, at, open, s, e) else nestedPair(t, at, open, close, s, e)
+            if (found != null && (best == null || found.first > best.first)) best = found
+        }
+        val (o, c) = best ?: return null
+        return if (around) Range(o, c + 1) else Range(o + 1, c)
+    }
+
+    private fun nestedPair(t: CharSequence, at: Int, open: Char, close: Char, s: Int, e: Int): Pair<Int, Int>? {
+        var depth = 0
+        var o = if (at < e && t[at] == close) at - 1 else at
+        while (o >= s) {
+            if (t[o] == close && o != at) depth++
+            else if (t[o] == open) { if (depth == 0) break; depth-- }
+            o--
+        }
+        if (o < s) return null
+        depth = 0
+        var c = o + 1
+        while (c < e) {
+            if (t[c] == open) depth++
+            else if (t[c] == close) { if (depth == 0) return o to c; depth-- }
+            c++
+        }
+        return null
+    }
+
+    /** 两边一样的引号（"" ''）：光标前最近的一个和它后面的一个；光标在第一个引号之前时取后面第一对。 */
+    private fun sameCharPair(t: CharSequence, at: Int, q: Char, s: Int, e: Int): Pair<Int, Int>? {
+        val before = (s..minOf(at, e - 1)).filter { t[it] == q }
+        val o = if (before.size % 2 == 1) before.last() else (at until e).firstOrNull { t[it] == q } ?: return null
+        val c = (o + 1 until e).firstOrNull { t[it] == q } ?: return null
+        return o to c
+    }
+
+    // ---------- J：把下一段接到这一段末尾 ----------
+
+    /**
+     * 把 [at] 所在这一段和下一段合成一段：去掉中间的换行（含段落间的空行）和下一段开头的空格。
+     * 两边都是英文、数字时中间补一个空格，中文之间不加。没有下一段时返回 null。
+     */
+    fun joinNext(t: CharSequence, at: Int): Edit? {
+        val e = lineEnd(t, at)
+        var j = e
+        while (j < t.length && t[j] == '\n') j++
+        if (j >= t.length || j == e) return null
+        while (j < t.length && t[j] == ' ') j++
+        val left = if (e > lineStart(t, at)) t[e - 1] else ' '
+        val right = if (j < t.length) t[j] else ' '
+        val space = if (left != ' ' && right != '\n' && TypingRules.isLatin(left) && TypingRules.isLatin(right)) " " else ""
+        return Edit(e, j, space, e)
     }
 }

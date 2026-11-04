@@ -203,7 +203,7 @@ class Vim(
             ch in FINDS -> { pending = ch; count = n }
             ch == ';' || ch == ',' -> visualMove(1) { repeatFind(ch, n) }
             // 只借用移动类按键；i、a 等在可视模式里另有含义（文本对象），这里先不支持
-            ch in "hjklwbe0\$GnN" -> visualMove(n) { normal(ch, event) }
+            ch in "hjklwbe0\$GnN(){}" -> visualMove(n) { normal(ch, event) }
         }
     }
 
@@ -276,6 +276,14 @@ class Vim(
             find(kind, ch, n, repeat = false)
             return
         }
+        // r 后面的那个键是要换上的字（数字也是）
+        if (pending == 'r') {
+            pending = null
+            val n = count.coerceAtLeast(1)
+            count = 0
+            if (ch != '\u0000') replaceChars(ch, n)
+            return
+        }
         val t = text
         val c = cursor
         // 数字前缀：单独的 0 是“到行首”
@@ -292,6 +300,10 @@ class Vim(
                 p == 'g' && ch == 'g' -> VimText.linesBetween(t, 0, c)
                 p == 'i' && ch == 'w' -> VimText.wordObject(t, c, around = false)
                 p == 'a' && ch == 'w' -> VimText.wordObject(t, c, around = true)
+                // is as 句子、ip ap 段落、i( a" i[ 等括号引号（英文的也匹配中文的“”「」（）《》）
+                (p == 'i' || p == 'a') && ch == 's' -> VimText.sentenceObject(t, c, around = p == 'a')
+                (p == 'i' || p == 'a') && ch == 'p' -> VimText.paragraphObject(t, c, around = p == 'a')
+                (p == 'i' || p == 'a') && VimText.isPairKey(ch) -> VimText.pairObject(t, c, ch, around = p == 'a')
                 p != null -> null
                 ch == op -> VimText.lines(t, c, total)
                 ch == 'g' || ch == 'i' || ch == 'a' -> { pending = ch; count = 0; return }
@@ -311,6 +323,19 @@ class Vim(
             ch == 'g' -> pending = 'g'
             ch in FINDS -> { pending = ch; count = n }
             ch == ';' || ch == ',' -> repeatFind(ch, n)
+            ch == 'r' -> { pending = 'r'; count = n }
+            // ( ) 按句子、{ } 按段落移动
+            ch == ')' -> { var to = c; repeat(n) { to = VimText.nextSentenceStart(t, to) }; move(to) }
+            ch == '(' -> { var to = c; repeat(n) { to = VimText.prevSentenceStart(t, to) }; move(to) }
+            ch == '}' -> { var to = c; repeat(n) { to = VimText.nextParagraphStart(t, to) }; move(to) }
+            ch == '{' -> { var to = c; repeat(n) { to = VimText.prevParagraphStart(t, to) }; move(to) }
+            // J：把下一段接上来（nJ 合并 n 段，最少一次）
+            ch == 'J' -> repeat(maxOf(1, n - 1)) {
+                val ed = VimText.joinNext(text, cursor) ?: return@repeat
+                changed = true
+                text.replace(ed.start, ed.end, ed.text)
+                move(ed.cursor)
+            }
             // ~：切换光标处 n 个字的大小写，光标右移（不跨段）
             ch == '~' -> {
                 val e = minOf(c + n, VimText.lineEnd(t, c))
@@ -381,6 +406,16 @@ class Vim(
         find(k, target, n, repeat = true)
     }
 
+    /** r：把光标起的 [n] 个字换成 [ch]（不够 n 个、跨段时不换，和 vim 一样），光标停在最后一个换掉的字上。 */
+    private fun replaceChars(ch: Char, n: Int) {
+        val t = text
+        val c = cursor
+        if (c + n > VimText.lineEnd(t, c)) return
+        val new = buildString { for (i in c until c + n) append(VimText.replacementFor(t[i], ch)) }
+        if (new != t.subSequence(c, c + n).toString()) { changed = true; t.replace(c, c + n, new) }
+        move(c + n - 1)
+    }
+
     /** 可视模式的 ~ u U：大小写互换、转小写、转大写，光标停在选区开头。 */
     private fun changeCase(r: VimText.Range, how: Char) {
         val t = text
@@ -409,6 +444,10 @@ class Vim(
             'j' -> VimText.linesBetween(t, c, VimText.advanceLines(t, c, n))
             'k' -> VimText.linesBetween(t, VimText.advanceLines(t, c, -n), c)
             'G' -> VimText.linesBetween(t, c, t.length)
+            ')' -> { var e = c; repeat(n) { e = VimText.nextSentenceStart(t, e) }; VimText.Range(c, e) }
+            '(' -> { var b = c; repeat(n) { b = VimText.prevSentenceStart(t, b) }; VimText.Range(b, c) }
+            '}' -> { var e = c; repeat(n) { e = VimText.nextParagraphStart(t, e) }; VimText.Range(c, e) }
+            '{' -> { var b = c; repeat(n) { b = VimText.prevParagraphStart(t, b) }; VimText.Range(b, c) }
             else -> null
         }
     }
