@@ -10,6 +10,11 @@ class FakeGitHub(private val repo: String = "me/notes", private val branch: Stri
     private val blobs = HashMap<String, ByteArray>()
     private val trees = HashMap<String, Map<String, String>>()
     private val commits = HashMap<String, Pair<String, String?>>() // sha → (tree, parent)
+    /** 每个提交的时间（毫秒）：从 [epoch] 开始，每个提交晚一分钟。 */
+    private val times = HashMap<String, Long>()
+    val epoch = 1_760_000_000_000L
+    /** 为 true 时 GraphQL 查询失败（模拟没有权限、接口变化）。 */
+    var failGraphql = false
     private var head: String
     private var seq = 0
 
@@ -24,6 +29,7 @@ class FakeGitHub(private val repo: String = "me/notes", private val branch: Stri
     init {
         trees["t0"] = emptyMap()
         commits["c0"] = "t0" to null
+        times["c0"] = epoch
         head = "c0"
     }
 
@@ -36,7 +42,21 @@ class FakeGitHub(private val repo: String = "me/notes", private val branch: Stri
         for ((p, text) in changes) if (text == null) tree.remove(p) else tree[p] = putBlob(text.toByteArray())
         val t = "t${++seq}"; trees[t] = tree
         val c = "c${++seq}"; commits[c] = t to head
+        times[c] = epoch + seq * 60_000L
         head = c
+    }
+
+    /** 最后一次改动 [path] 的提交的时间。 */
+    fun lastChanged(path: String): Long? {
+        var c: String? = head
+        while (c != null) {
+            val (tree, parent) = commits.getValue(c)
+            val now = trees.getValue(tree)[path]
+            val before = parent?.let { trees.getValue(commits.getValue(it).first)[path] }
+            if (now != null && now != before) return times.getValue(c)
+            c = parent
+        }
+        return null
     }
 
     private fun putBlob(bytes: ByteArray): String = SyncPlan.blobSha(bytes).also { blobs[it] = bytes }
@@ -74,8 +94,23 @@ class FakeGitHub(private val repo: String = "me/notes", private val branch: Stri
                 val t = "t${++seq}"; trees[t] = tree
                 JSONObject().put("sha", t)
             }
+            method == "POST" && path == "/graphql" -> {
+                if (failGraphql) throw GitHubSync.HttpError(403, "graphql not allowed")
+                val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                val target = JSONObject()
+                val field = Regex("""f(\d+): history\(first: 1, path: "((?:[^"\\]|\\.)*)"\)""")
+                for (m in field.findAll(body!!.getString("query"))) {
+                    val path = JSONArray("[\"${m.groupValues[2]}\"]").getString(0)
+                    val nodes = JSONArray()
+                    lastChanged(path)?.let { nodes.put(JSONObject().put("committedDate", iso.format(java.util.Date(it)))) }
+                    target.put("f${m.groupValues[1]}", JSONObject().put("nodes", nodes))
+                }
+                JSONObject().put("data", JSONObject().put("repository", JSONObject().put("ref", JSONObject().put("target", target))))
+            }
             method == "POST" && p == "/git/commits" -> {
                 val c = "c${++seq}"
+                times[c] = epoch + seq * 60_000L
                 commits[c] = body!!.getString("tree") to body.getJSONArray("parents").getString(0)
                 JSONObject().put("sha", c)
             }

@@ -80,6 +80,11 @@ class GitHubSync(
     private val device: () -> String = { "${Build.MANUFACTURER} ${Build.MODEL}" },
     /** 和编辑器保存共用的锁：检查本地文件没变和写入之间，不能插进一次保存。 */
     private val lock: Any = Any(),
+    /**
+     * 本地这篇可以让位给远端的同名文件（例如新装 App 时生成、还没改过的欢迎文档）：
+     * 两边不同时直接下载远端的，不当作冲突另存一份。每台新设备第一次同步都会碰到。
+     */
+    private val disposable: (path: String, bytes: ByteArray) -> Boolean = { _, _ -> false },
 ) {
     /** 同步的目标。token 不出现在 toString 里，以免被写进日志。 */
     class Target(val apiBase: String, val repo: String, val branch: String, val subdir: String, val token: String) {
@@ -170,7 +175,13 @@ class GitHubSync(
         val local = scanLocal()
         val state = loadState()
         val key = state.optString("key")
-        val base = if (key == stateKey() || key == legacyStateKey()) toMap(state.optJSONObject("base")) else emptyMap()
+        val savedBase = if (key == stateKey() || key == legacyStateKey()) toMap(state.optJSONObject("base")) else emptyMap()
+        // 可以让位的本地文件：当作上次同步时就是这样（没改过），三方比较时远端的版本胜出
+        val base = HashMap(savedBase)
+        for ((path, sha) in local) {
+            val r = remote[path] ?: continue
+            if (r != sha && savedBase[path] == null && disposable(path, File(dir, path).readBytes())) base[path] = sha
+        }
 
         // 只差大小写的远端文件本地放不下，这次不同步，也不会因为“本地没有”去删远端的
         val skipped = SyncPlan.caseClashes(local, remote, base).sorted()
@@ -185,11 +196,16 @@ class GitHubSync(
         // 执行之后本地应有的内容。下载和移进回收站之前都核对文件还是扫描时的样子：
         // 同步要联网好几秒，这期间编辑器可能刚保存过，不能把刚打的字覆盖掉或移走（留给下次同步按冲突处理）。
         val agreed = HashMap(local)
+        // 写到本地的远端版本：本地路径 → （远端路径，内容的 sha），之后把修改时间改成远端最后一次提交的时间
+        val written = HashMap<String, Pair<String, String>>()
         for (a in actions) {
             when (a) {
                 is SyncPlan.Action.Download -> {
                     val bytes = blob(repoPath, remote.getValue(a.path))
-                    if (ifUnchanged(a.path, local[a.path]) { writeLocal(a.path, bytes) }) { agreed[a.path] = remote.getValue(a.path); downloaded++ }
+                    if (ifUnchanged(a.path, local[a.path]) { writeLocal(a.path, bytes) }) {
+                        agreed[a.path] = remote.getValue(a.path); downloaded++
+                        written[a.path] = a.path to remote.getValue(a.path)
+                    }
                 }
                 is SyncPlan.Action.TrashLocal -> {
                     if (ifUnchanged(a.path, local[a.path]) { moveToTrash(File(dir, a.path)) }) { agreed.remove(a.path); trashed++ }
@@ -198,6 +214,7 @@ class GitHubSync(
                     val bytes = blob(repoPath, remote.getValue(a.path))
                     if (!ifUnchanged(a.copyPath, local[a.copyPath]) { writeLocal(a.copyPath, bytes) }) error("${a.copyPath} 刚被改过，稍后再同步")
                     agreed[a.copyPath] = remote.getValue(a.path)
+                    written[a.copyPath] = a.path to remote.getValue(a.path)
                     conflicts += a.copyPath
                     treeEntries.put(uploadEntry(repoPath, a.path).also { agreed[a.path] = it.getString("sha") }); uploaded++
                 }
@@ -208,6 +225,13 @@ class GitHubSync(
                 }
             }
         }
+
+        // 下载下来的文件，修改时间是这一刻；改成它在远端最后一次提交的时间，文档列表里的日期才是文档真正改的时间
+        val downloadedTimesOk = applyRemoteTimes(owner, name, written, onlyEarlier = false)
+        // 升级到这一版后第一次同步：以前下载的文件修改时间都是下载那一刻，补一次。只往早里改，
+        // 在这台设备上写的文档（本地修改时间早于推送的提交）不动。这次下载的没改成功，也留到下次一起补
+        val timesFixed = downloadedTimesOk && (state.optBoolean("timesFixed") ||
+            applyRemoteTimes(owner, name, local.filter { (p, sha) -> remote[p] == sha && p !in written }.mapValues { (p, sha) -> p to sha }, onlyEarlier = true))
 
         // 4. 推送一个提交
         val remoteAfter = HashMap(remote)
@@ -232,9 +256,49 @@ class GitHubSync(
         // 5. 记录新的“共同状态”。不重新扫描本地：同步期间又改过的文件，base 应当是这次推送的版本
         val newBase = JSONObject()
         for ((p, sha) in SyncPlan.nextBase(agreed, remoteAfter, base)) newBase.put(p, sha)
-        stateFile.writeText(JSONObject().put("key", stateKey()).put("base", newBase).put("time", System.currentTimeMillis()).toString())
+        stateFile.writeText(JSONObject().put("key", stateKey()).put("base", newBase).put("time", System.currentTimeMillis())
+            .put("timesFixed", timesFixed).toString())
 
         return Result(uploaded, downloaded, deleted, trashed, conflicts, skipped)
+    }
+
+    /**
+     * 把 [written] 里的本地文件的修改时间改成远端最后一次改它的提交时间。查不到（网络、权限、接口变化）就保持原样，
+     * 不影响同步，返回 false。改之前核对文件还是刚写进去的内容：同步期间编辑器刚保存过的，不去动它。
+     * [onlyEarlier] 时只把修改时间往早里改。
+     */
+    private fun applyRemoteTimes(owner: String, name: String, written: Map<String, Pair<String, String>>, onlyEarlier: Boolean): Boolean {
+        if (written.isEmpty()) return true
+        val times = runCatching { lastCommitTimes(owner, name, written.values.map { it.first }.distinct()) }.getOrNull() ?: return false
+        synchronized(lock) {
+            for ((localPath, remoteAndSha) in written) {
+                val time = times[remoteAndSha.first] ?: continue
+                val f = File(dir, localPath)
+                if (onlyEarlier && f.lastModified() <= time) continue
+                if (f.isFile && SyncPlan.blobSha(f.readBytes()) == remoteAndSha.second) f.setLastModified(time)
+            }
+        }
+        return true
+    }
+
+    /** 每个文件最后一次被改的提交时间（毫秒）。用 GraphQL 一次查 50 个；REST 只能一个个查，第一次同步几百篇会很慢。 */
+    private fun lastCommitTimes(owner: String, name: String, paths: List<String>): Map<String, Long> {
+        val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
+        val out = HashMap<String, Long>()
+        for (chunk in paths.chunked(50)) {
+            val fields = chunk.mapIndexed { i, p ->
+                "f$i: history(first: 1, path: ${JSONObject.quote(prefix + p)}) { nodes { committedDate } }"
+            }.joinToString(" ")
+            val query = "query { repository(owner: ${JSONObject.quote(owner)}, name: ${JSONObject.quote(name)}) { " +
+                "ref(qualifiedName: ${JSONObject.quote("refs/heads/${target.branch}")}) { target { ... on Commit { $fields } } } } }"
+            val commit = api("POST", "/graphql", JSONObject().put("query", query))
+                .optJSONObject("data")?.optJSONObject("repository")?.optJSONObject("ref")?.optJSONObject("target") ?: continue
+            chunk.forEachIndexed { i, p ->
+                val date = commit.optJSONObject("f$i")?.optJSONArray("nodes")?.optJSONObject(0)?.optString("committedDate").orEmpty()
+                runCatching { iso.parse(date)?.time }.getOrNull()?.let { out[p] = it }
+            }
+        }
+        return out
     }
 
     /** 读取 GitHub 仓库信息，用于“测试连接”：返回能否写入。 */

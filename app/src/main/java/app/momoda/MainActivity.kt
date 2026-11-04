@@ -1066,7 +1066,8 @@ class MainActivity : Activity() {
 
     // ---------- GitHub 同步（DESIGN §5） ----------
 
-    private fun makeSync() = GitHubSync(sync.target(), store.dir, File(filesDir, "sync-state.json"), moveToTrash = { f -> store.moveToTrash(f) }, lock = store)
+    private fun makeSync() = GitHubSync(sync.target(), store.dir, File(filesDir, "sync-state.json"), moveToTrash = { f -> store.moveToTrash(f) }, lock = store,
+        disposable = { _, bytes -> store.isUntouchedWelcome(bytes) })
 
     private fun showSyncConfig() {
         save()

@@ -25,6 +25,64 @@ class GitHubSyncTest {
     private fun write(name: String, text: String, dir: File = docs) = File(dir, name).apply { parentFile.mkdirs(); writeText(text) }
     private fun read(name: String, dir: File = docs) = File(dir, name).takeIf { it.exists() }?.readText()
 
+    @Test fun downloadedFilesGetRemoteCommitTime() {
+        gh.push(mapOf("a.md" to "a", "sub/b.md" to "b"))
+        gh.push(mapOf("a.md" to "a2"))
+        sync()
+        // 列表里的日期是文档在远端最后一次被改的时间，不是下载的这一刻
+        assertEquals(gh.lastChanged("a.md"), File(docs, "a.md").lastModified())
+        assertEquals(gh.lastChanged("sub/b.md"), File(docs, "sub/b.md").lastModified())
+        assertTrue(File(docs, "sub/b.md").lastModified() < File(docs, "a.md").lastModified())
+    }
+
+    @Test fun earlierDownloadsGetTheirTimesFixedOnce() {
+        // 以前的版本下载下来的文件，修改时间是下载那一刻：升级后第一次同步时改回远端的提交时间
+        gh.push(mapOf("a.md" to "a"))
+        gh.failGraphql = true
+        sync()
+        val downloadedAt = File(docs, "a.md").lastModified()
+        assertTrue(downloadedAt > gh.lastChanged("a.md")!!)
+        gh.failGraphql = false
+        sync()
+        assertEquals(gh.lastChanged("a.md"), File(docs, "a.md").lastModified())
+    }
+
+    @Test fun localEditTimesAreNotPushedLater() {
+        // 在这台设备上写、推上去的文档：本地修改时间早于提交时间，不改
+        val f = write("mine.md", "我写的").apply { setLastModified(gh.epoch - 3_600_000L) }
+        sync()
+        assertEquals(gh.epoch - 3_600_000L, f.lastModified())
+    }
+
+    @Test fun commitTimeLookupFailureDoesNotBreakSync() {
+        gh.failGraphql = true
+        gh.push(mapOf("a.md" to "a"))
+        val r = sync()
+        assertEquals(1, r.downloaded)
+        assertEquals("a", read("a.md"))
+    }
+
+    @Test fun disposableLocalYieldsToRemote() {
+        // 新设备生成的欢迎文档还没改过，仓库里有另一版：直接用仓库的，不另存冲突副本
+        write("欢迎使用墨墨打.md", "新装时的欢迎")
+        gh.push(mapOf("欢迎使用墨墨打.md" to "仓库里的欢迎"))
+        val r = GitHubSync(target(), docs, File(root, "state.json"), { f -> f.renameTo(File(trash, f.name)) }, gh, { "test" },
+            disposable = { _, bytes -> String(bytes) == "新装时的欢迎" }).run()
+        assertEquals("仓库里的欢迎", read("欢迎使用墨墨打.md"))
+        assertEquals(emptyList<String>(), r.conflicts)
+        assertEquals(listOf("欢迎使用墨墨打.md"), docs.list()!!.toList())
+        assertEquals(mapOf("欢迎使用墨墨打.md" to "仓库里的欢迎"), gh.files())
+    }
+
+    @Test fun editedLocalStillConflicts() {
+        write("欢迎使用墨墨打.md", "我改过的欢迎")
+        gh.push(mapOf("欢迎使用墨墨打.md" to "仓库里的欢迎"))
+        val r = GitHubSync(target(), docs, File(root, "state.json"), { f -> f.renameTo(File(trash, f.name)) }, gh, { "test" },
+            disposable = { _, bytes -> String(bytes) == "新装时的欢迎" }).run()
+        assertEquals("我改过的欢迎", read("欢迎使用墨墨打.md"))
+        assertEquals(1, r.conflicts.size)
+    }
+
     @Test fun subdirNeverTouchesFilesOutsideIt() {
         gh.push(mapOf("README.md" to "root", "notes/a.md" to "a", "notesX/b.md" to "b", "other/c.md" to "c"))
         sync("notes")

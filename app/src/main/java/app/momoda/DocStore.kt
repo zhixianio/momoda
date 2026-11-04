@@ -227,6 +227,9 @@ class DocStore(private val context: Context) {
         get() = prefs.getBoolean("welcomed", false)
         set(v) = prefs.edit().putBoolean("welcomed", v).apply()
 
+    /** 内容就是随 App 带的欢迎文档、还没改过（同步时让位给仓库里的版本）。 */
+    fun isUntouchedWelcome(bytes: ByteArray): Boolean = welcomeText?.let { String(bytes) == it } == true
+
     private val welcomeText: String? by lazy {
         runCatching { context.assets.open("welcome.md").bufferedReader().use { it.readText() } }.getOrNull()
     }
