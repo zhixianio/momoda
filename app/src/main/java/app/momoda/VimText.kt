@@ -190,4 +190,46 @@ object VimText {
         val tightAbove = s >= 2 && t[s - 1] == '\n' && t[s - 2] != '\n'
         return if (tightBelow || tightAbove) "\n" else "\n\n"
     }
+
+    // ---------- f F t T：在本段里找一个字 ----------
+
+    /**
+     * 普通模式下按键不经过输入法，打不出中文标点：英文标点也匹配对应的中文标点，
+     * 例如 `f,` 跳到下一个“，”，`f.` 跳到“。”，`f\\` 跳到“、”（中文键盘上反斜杠就是顿号）。
+     */
+    private val fullWidth = mapOf(
+        ',' to "，", '.' to "。", ';' to "；", ':' to "：", '?' to "？", '!' to "！",
+        '(' to "（", ')' to "）", '[' to "「【『", ']' to "」】』", '{' to "『", '}' to "』",
+        '<' to "《〈", '>' to "》〉", '"' to "“”", '\'' to "‘’", '\\' to "、", '~' to "～", '-' to "—",
+    )
+
+    fun matches(c: Char, target: Char): Boolean = c == target || fullWidth[target]?.contains(c) == true
+
+    /**
+     * 从 [from] 往后（[forward]）或往前找本段里第 [n] 个 [target]，返回光标该停的位置；找不到返回 null。
+     * [till] 是 t / T：停在那个字前面（往前找时是后面）。[repeat] 是 ; 和 , 重复 t / T：
+     * 光标正好紧挨着目标时跳过它，找下一个，否则会原地不动。
+     */
+    fun findChar(t: CharSequence, from: Int, target: Char, forward: Boolean, till: Boolean, n: Int = 1, repeat: Boolean = false): Int? {
+        val s = lineStart(t, from)
+        val e = lineEnd(t, from)
+        var i = from
+        // t 的重复：紧挨着的那个不算
+        if (till && repeat) i += if (forward) 1 else -1
+        var found = 0
+        while (true) {
+            i += if (forward) 1 else -1
+            if (i < s || i >= e) return null
+            if (matches(t[i], target) && ++found == n) return if (!till) i else if (forward) i - 1 else i + 1
+        }
+    }
+
+    /** d、c、y 接 f F t T 时作用的范围：往后找包含目标那个字，往前找不含光标所在的字（和 vim 一样）。 */
+    fun findRange(from: Int, to: Int, forward: Boolean): Range =
+        if (forward) Range(from, to + 1) else Range(to, from)
+
+    /** ~：大小写互换（只影响有大小写的字母，汉字、标点不变）。 */
+    fun toggleCase(s: CharSequence): String = buildString(s.length) {
+        for (c in s) append(if (c.isUpperCase()) c.lowercaseChar() else if (c.isLowerCase()) c.uppercaseChar() else c)
+    }
 }

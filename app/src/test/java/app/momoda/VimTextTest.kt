@@ -117,4 +117,42 @@ class VimTextTest {
 
     @Test fun pasteAfterLastListItemStaysInList() =
         assertEquals("- 甲\n- 乙\n- 甲" to 8, paste("- 甲\n- 乙", 4, "- 甲", after = true))
+
+    @Test fun fFindsNextChar() = assertEquals(6, VimText.findChar("one two", 0, 'o', forward = true, till = false))
+
+    @Test fun fWithCount() = assertEquals(5, VimText.findChar("a,b,c,d", 0, ',', forward = true, till = false, n = 3))
+
+    @Test fun fCommaMatchesChineseComma() =
+        assertEquals(2, VimText.findChar("我说，你听，", 0, ',', forward = true, till = false))
+
+    @Test fun fPeriodMatchesChinesePeriod() = assertEquals(3, VimText.findChar("第一句。第二句。", 0, '.', forward = true, till = false))
+
+    @Test fun tStopsBefore() = assertEquals(1, VimText.findChar("ab,cd", 0, ',', forward = true, till = true))
+
+    @Test fun tRepeatSkipsAdjacent() = assertEquals(3, VimText.findChar("ab,c,d", 1, ',', forward = true, till = true, repeat = true))
+
+    @Test fun capitalFSearchesBackward() = assertEquals(3, VimText.findChar("a，b，c", 4, ',', forward = false, till = false))
+
+    @Test fun capitalTStopsAfter() = assertEquals(2, VimText.findChar("a，b，c", 4, ',', forward = false, till = true, n = 2))
+
+    @Test fun findStaysInParagraph() = assertEquals(null, VimText.findChar("甲乙\n\n丙，", 0, ',', forward = true, till = false))
+
+    @Test fun backslashFindsDunhao() = assertEquals(2, VimText.findChar("苹果、梨", 0, '\\', forward = true, till = false))
+
+    @Test fun lettersAreCaseSensitive() = assertEquals(null, VimText.findChar("abc", 0, 'B', forward = true, till = false))
+
+    @Test fun dfIncludesTarget() {
+        val t = "删到逗号，为止"
+        val to = VimText.findChar(t, 0, ',', forward = true, till = false)!!
+        val r = VimText.findRange(0, to, forward = true)
+        assertEquals("为止", t.substring(0, r.start) + t.substring(r.end))
+    }
+
+    @Test fun dFExcludesCursorChar() {
+        val t = "甲，乙丙"
+        val r = VimText.findRange(3, VimText.findChar(t, 3, ',', forward = false, till = false)!!, forward = false)
+        assertEquals("甲丙", t.substring(0, r.start) + t.substring(r.end))
+    }
+
+    @Test fun toggleCaseLeavesHanAlone() = assertEquals("hELLO 世界 123", VimText.toggleCase("Hello 世界 123"))
 }

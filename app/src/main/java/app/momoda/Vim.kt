@@ -21,6 +21,8 @@ class Vim(
     enum class Mode { INSERT, NORMAL, VISUAL, VISUAL_LINE }
 
     private companion object {
+        /** 找字的四个命令：f F 停在那个字上，t T 停在它前（后）面。 */
+        const val FINDS = "fFtT"
         /** 数字前缀的上限：误打一串数字（比如手机号）再接 j 或 p，不至于卡死或撑爆内存。 */
         const val MAX_COUNT = 9999
     }
@@ -166,6 +168,14 @@ class Vim(
     }
 
     private fun visual(ch: Char, event: KeyEvent) {
+        // f F t T 后面的那个键是要找的字（数字也是），先于数字前缀处理
+        pending?.takeIf { it in FINDS }?.let { kind ->
+            pending = null
+            val n = count.coerceAtLeast(1)
+            count = 0
+            if (ch != '\u0000') { lastFind = kind to ch; visualMove(1) { find(kind, ch, n, repeat = false) } }
+            return
+        }
         if (ch in '1'..'9' || (ch == '0' && count > 0)) { count = (count * 10 + (ch - '0')).coerceAtMost(MAX_COUNT); return }
         val n = count.coerceAtLeast(1)
         count = 0
@@ -186,8 +196,12 @@ class Vim(
                 register = reg; registerLines = lines
                 paste(after = false, 1)
             }
+            // ~ 大小写互换，u 转小写，U 转大写
+            ch == '~' || ch == 'u' || ch == 'U' -> { val r = selection(); exitVisual(); changeCase(r, ch) }
             p == 'g' && ch == 'g' -> visualMove(n) { move(0) }
             ch == 'g' -> pending = 'g'
+            ch in FINDS -> { pending = ch; count = n }
+            ch == ';' || ch == ',' -> visualMove(1) { repeatFind(ch, n) }
             // 只借用移动类按键；i、a 等在可视模式里另有含义（文本对象），这里先不支持
             ch in "hjklwbe0\$GnN" -> visualMove(n) { normal(ch, event) }
         }
@@ -252,6 +266,16 @@ class Vim(
     private fun reset() { count = 0; operator = null; operatorCount = 1; pending = null }
 
     private fun normal(ch: Char, event: KeyEvent) {
+        // f F t T 后面的那个键是要找的字（数字也是），先于数字前缀处理
+        pending?.takeIf { it in FINDS }?.let { kind ->
+            pending = null
+            val n = count.coerceAtLeast(1)
+            count = 0
+            if (ch == '\u0000') { operator = null; return }
+            lastFind = kind to ch
+            find(kind, ch, n, repeat = false)
+            return
+        }
         val t = text
         val c = cursor
         // 数字前缀：单独的 0 是“到行首”
@@ -271,6 +295,9 @@ class Vim(
                 p != null -> null
                 ch == op -> VimText.lines(t, c, total)
                 ch == 'g' || ch == 'i' || ch == 'a' -> { pending = ch; count = 0; return }
+                // df,、dt。、2dfx：数字留到找字时用
+                ch in FINDS -> { pending = ch; count = n; return }
+                ch == ';' || ch == ',' -> { repeatFind(ch, n); return }
                 else -> motionRange(ch, total, change = op == 'c')
             }
             operator = null
@@ -282,6 +309,13 @@ class Vim(
             p == 'g' && ch == 'g' -> move(if (n > 1) VimText.advanceLines(t, 0, n - 1) else 0)
             p != null -> Unit
             ch == 'g' -> pending = 'g'
+            ch in FINDS -> { pending = ch; count = n }
+            ch == ';' || ch == ',' -> repeatFind(ch, n)
+            // ~：切换光标处 n 个字的大小写，光标右移（不跨段）
+            ch == '~' -> {
+                val e = minOf(c + n, VimText.lineEnd(t, c))
+                if (e > c) { changed = true; t.replace(c, e, VimText.toggleCase(t.subSequence(c, e))); move(e) }
+            }
             ch == 'v' -> enterVisual(Mode.VISUAL)
             ch == 'V' -> enterVisual(Mode.VISUAL_LINE)
             ch == '/' -> search(forward = true)
@@ -318,6 +352,46 @@ class Vim(
             ch == 'o' -> { changed = true; val e = VimText.lineEnd(t, c); t.insert(e, "\n\n"); move(e + 2); setMode(Mode.INSERT) }
             ch == 'O' -> { changed = true; val s = VimText.lineStart(t, c); t.insert(s, "\n\n"); move(s); setMode(Mode.INSERT) }
         }
+    }
+
+    /** 上一次 f F t T 找的是什么（; 和 , 重复它）。 */
+    private var lastFind: Pair<Char, Char>? = null
+
+    /**
+     * f F t T：在本段里找 [target]，移动光标；前面有操作符（d c y）时作用在光标到目标的范围上。
+     * 英文标点也匹配中文标点（f, 找“，”），见 [VimText.matches]。
+     */
+    private fun find(kind: Char, target: Char, n: Int, repeat: Boolean) {
+        val forward = kind == 'f' || kind == 't'
+        val c = cursor
+        val op = operator
+        val to = VimText.findChar(text, c, target, forward, till = kind == 't' || kind == 'T', n = if (op != null) operatorCount * n else n, repeat = repeat)
+        if (op != null) {
+            operator = null
+            if (to != null) apply(op, VimText.findRange(c, to, forward))
+            return
+        }
+        if (to != null) move(to)
+    }
+
+    /** ; 按原方向、, 反方向重复上一次 f F t T。 */
+    private fun repeatFind(ch: Char, n: Int) {
+        val (kind, target) = lastFind ?: run { operator = null; return }
+        val k = if (ch == ';') kind else when (kind) { 'f' -> 'F'; 'F' -> 'f'; 't' -> 'T'; else -> 't' }
+        find(k, target, n, repeat = true)
+    }
+
+    /** 可视模式的 ~ u U：大小写互换、转小写、转大写，光标停在选区开头。 */
+    private fun changeCase(r: VimText.Range, how: Char) {
+        val t = text
+        // 整段选中（V）时范围带着段落分隔，只改段落里的字，光标停在这一段开头（和 y 一样）
+        val s = if (r.linewise) r.innerStart else r.start
+        val e = if (r.linewise) r.innerEnd else r.end
+        if (e <= s || e > t.length) return
+        val old = t.subSequence(s, e)
+        val new = when (how) { 'u' -> old.toString().lowercase(); 'U' -> old.toString().uppercase(); else -> VimText.toggleCase(old) }
+        if (new != old.toString()) { changed = true; t.replace(s, e, new) }
+        move(s)
     }
 
     /** 操作符后面跟的动作对应的范围；不支持的动作返回 null（操作取消）。 */
