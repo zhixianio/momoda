@@ -121,7 +121,14 @@ object InkList {
                 tv.gravity = Gravity.CENTER_VERTICAL
                 tv.setPadding(px(20), 0, px(20), 0)
                 tv.setTextColor(Color.BLACK)
-                tv.text = SpannableStringBuilder(item.label).apply {
+                // 标题太长时截短它，给后面的说明（所在文件夹、日期、快捷键）留出地方，最多占一行的一半
+                val avail = (parent.width - tv.paddingLeft - tv.paddingRight).toFloat()
+                val label: CharSequence = if (item.detail.isEmpty() || avail <= 0f) item.label else {
+                    val detailPaint = android.text.TextPaint(tv.paint).apply { textSize = tv.textSize * 0.8f }
+                    val detailWidth = minOf(detailPaint.measureText("　　" + item.detail), avail * 0.5f)
+                    android.text.TextUtils.ellipsize(item.label, tv.paint, avail - detailWidth, android.text.TextUtils.TruncateAt.END)
+                }
+                tv.text = SpannableStringBuilder(label).apply {
                     if (item.detail.isNotEmpty()) {
                         val s = length
                         append("　　").append(item.detail)
