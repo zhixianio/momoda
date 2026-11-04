@@ -45,4 +45,23 @@ class TitlesTest {
 
     @Test fun excerptKeepsLiteralAsterisksAndUnderscores() =
         assertEquals("3 * 4 snake_case 粗", Titles.excerptOf("# t\n3 * 4 snake_case **粗**"))
+
+    @Test fun titleSkipsFrontMatter() =
+        assertEquals("会议记录", Titles.titleOf("---\ntags: [a]\ndate: 2026-11-04\n---\n\n# 会议记录\n\n正文"))
+
+    @Test fun unterminatedFrontMatterIsNotSkipped() = assertEquals("---", Titles.titleOf("---\n正文"))
+
+    @Test fun withTitleKeepsFrontMatter() =
+        assertEquals("---\na: 1\n---\n# 新标题\n正文", Titles.withTitle("---\na: 1\n---\n# 旧标题\n正文", "新标题"))
+
+    @Test fun excerptSkipsFrontMatter() = assertEquals("正文", Titles.excerptOf("---\na: 1\n---\n# 标题\n正文"))
+
+    @Test fun createdHereFollowsTitle() = assertEquals(true, Titles.isMomodaName("2026-11-04", "会议", createdHere = true))
+
+    @Test fun nameMatchingTitleFollows() = assertEquals(true, Titles.isMomodaName("会议记录 2", "会议记录", createdHere = false))
+
+    @Test fun externalNameDoesNotFollow() =
+        assertEquals(false, Titles.isMomodaName("2026-11-04-meeting", "会议记录", createdHere = false))
+
+    @Test fun dailyNoteDateNameDoesNotFollow() = assertEquals(false, Titles.isMomodaName("2026-11-04", "今天", createdHere = false))
 }

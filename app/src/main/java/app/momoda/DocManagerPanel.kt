@@ -26,8 +26,11 @@ import kotlin.math.abs
  * 文档管理页（DESIGN §1）：全屏列表，显示标题、日期、字数和开头几行摘要。
  * 也是回收站的入口。为了墨水屏，列表不滚动而是分页：一页放得下多少就显示多少，翻页整页跳。
  *
- * 键盘：↑↓ 选择，Enter 打开（回收站里是恢复），Del 删除（进回收站；回收站里是彻底删除，需要按两次），
- *       R 改标题，S 切换排序，T 切换回收站，PageUp/PageDown 翻页，Esc 关闭。
+ * 文档分在子文件夹里时按文件夹浏览：先列子文件夹，再列这一层的文档；打开时停在当前文档所在的文件夹。
+ * 墨墨打不新建、移动、重命名文件夹（交给电脑或别的应用）。
+ *
+ * 键盘：↑↓ 选择，Enter 打开（文件夹是进入，回收站里是恢复），← 上一层，Del 删除（进回收站；回收站里是彻底删除，
+ *       需要按两次），R 改标题，S 切换排序，T 切换回收站，PageUp/PageDown 翻页，Esc 关闭。
  * 笔：点行打开；行尾的按钮改标题、删除或恢复；上下滑动翻页。
  */
 class DocManagerPanel(
@@ -47,7 +50,8 @@ class DocManagerPanel(
 
     private enum class Sort(val label: String) { MODIFIED("修改时间"), TITLE("标题") }
 
-    private class Entry(val file: File, val title: String, val detail: String, val excerpt: String)
+    /** 一行：文档（[file]）或子文件夹（[folder]，相对路径）。 */
+    private class Entry(val file: File?, val title: String, val detail: String, val excerpt: String, val folder: String? = null)
 
     private val dp = context.resources.displayMetrics.density
     private fun px(v: Int) = (v * dp).toInt()
@@ -66,6 +70,9 @@ class DocManagerPanel(
     private var page = 0
     private var perPage = 8
     private var purgeArmed: File? = null
+    /** 正在看的文件夹（相对文档目录，根目录是空字符串）。 */
+    private var folder = ""
+    private lateinit var upButton: View
     private val rowHeight = px(84)
 
     fun show() {
@@ -79,7 +86,7 @@ class DocManagerPanel(
             setPadding(px(28), px(24), px(28), px(4))
         }
         val hint = TextView(context).apply {
-            text = "Enter 打开　Del 删除　R 改标题　S 排序　T 回收站　Esc 关闭"
+            text = "Enter 打开　← 上一层　Del 删除　R 改标题　S 排序　T 回收站　Esc 关闭"
             setTextColor(Color.rgb(0x88, 0x88, 0x88))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             this.typeface = typeface
@@ -88,6 +95,7 @@ class DocManagerPanel(
         val toolbar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(px(20), 0, px(20), px(8))
+            upButton = button("上一层") { up() }.also { addView(it) }
             addView(button("切换排序") { toggleSort() })
             addView(button("回收站 / 文档") { toggleTrash() })
             addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
@@ -153,6 +161,7 @@ class DocManagerPanel(
             }
         }
         root.requestFocus()
+        folder = store.folderOf(current())
         reload()
     }
 
@@ -163,6 +172,8 @@ class DocManagerPanel(
             KeyEvent.KEYCODE_PAGE_DOWN -> turnPage(+1)
             KeyEvent.KEYCODE_PAGE_UP -> turnPage(-1)
             KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> activate(selected)
+            KeyEvent.KEYCODE_DPAD_LEFT -> up()
+            KeyEvent.KEYCODE_DPAD_RIGHT -> if (entries.getOrNull(selected)?.folder != null) activate(selected)
             KeyEvent.KEYCODE_FORWARD_DEL, KeyEvent.KEYCODE_DEL -> delete(selected)
             KeyEvent.KEYCODE_R -> retitle(selected)
             KeyEvent.KEYCODE_S -> toggleSort()
@@ -174,7 +185,13 @@ class DocManagerPanel(
     }
 
     private fun reload() {
-        val files = if (inTrash) store.trashList() else store.list()
+        val all = if (inTrash) store.trashList() else store.list()
+        // 文件夹没了（例如里面的文档都删了、同步时被别处删了）：退回上一层，直到有东西或到根目录
+        if (!inTrash) {
+            val keys = all.map { store.key(it) }
+            while (folder.isNotEmpty() && keys.none { it.startsWith("$folder/") }) folder = DocFolders.parent(folder).orEmpty()
+        }
+        val files = if (inTrash) all else all.filter { store.folderOf(it) == folder }
         val loaded = files.map { f ->
             val s = store.summaries.of(f)
             val title = s.title ?: f.nameWithoutExtension
@@ -185,13 +202,42 @@ class DocManagerPanel(
             }
             Entry(f, title, detail, s.excerpt)
         }
-        entries = when (sort) {
+        val docs = when (sort) {
             Sort.MODIFIED -> loaded
             Sort.TITLE -> loaded.sortedBy { sortKey(it.title) }
         }
+        val folders = if (inTrash) emptyList() else {
+            val byKey = all.associateBy { store.key(it) }
+            DocFolders.children(byKey.keys.toList(), folder) { byKey.getValue(it).lastModified() }.map {
+                Entry(null, "${it.name}/", "${it.docs} 篇 · 最近修改 ${dateFmt.format(Date(it.latest))}", "", folder = it.path)
+            }.let { if (sort == Sort.TITLE) it.sortedBy { e -> sortKey(e.title) } else it }
+        }
+        entries = folders + docs
         selected = selected.coerceIn(0, (entries.size - 1).coerceAtLeast(0))
-        header.text = if (inTrash) "回收站（${entries.size}）" else "管理文档（${entries.size}）　按${sort.label}"
+        // 只有文档时照旧写篇数；有子文件夹时写“3 篇 · 2 个文件夹”，没有文档就只写文件夹
+        val count = when {
+            folders.isEmpty() -> "${docs.size}"
+            docs.isEmpty() -> "${folders.size} 个文件夹"
+            else -> "${docs.size} 篇 · ${folders.size} 个文件夹"
+        }
+        header.text = when {
+            inTrash -> "回收站（${entries.size}）"
+            folder.isEmpty() -> "管理文档（$count）　按${sort.label}"
+            else -> "$folder（$count）　按${sort.label}"
+        }
+        upButton.visibility = if (!inTrash && folder.isNotEmpty()) View.VISIBLE else View.GONE
         relayoutPages()
+    }
+
+    /** 回到上一层，选中刚才那个文件夹。 */
+    private fun up() {
+        if (inTrash) return
+        val parent = DocFolders.parent(folder) ?: return
+        val from = folder
+        folder = parent
+        purgeArmed = null
+        reload()
+        entries.indexOfFirst { it.folder == from }.takeIf { it >= 0 }?.let { select(it) }
     }
 
     /** 标题排序：汉字按拼音，其他按原样。 */
@@ -256,7 +302,9 @@ class DocManagerPanel(
             setPadding(px(12), 0, px(8), 0)
             background = if (i == selected) frame else null
             addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
-            if (inTrash) {
+            if (e.folder != null) {
+                // 文件夹：只能进入
+            } else if (inTrash) {
                 addView(button("恢复") { activate(i) })
                 addView(button(if (purgeArmed == e.file) "确认删除" else "彻底删除") { delete(i) })
             } else {
@@ -313,25 +361,34 @@ class DocManagerPanel(
 
     private fun activate(i: Int) {
         val e = entries.getOrNull(i) ?: return
+        if (e.folder != null) {
+            folder = e.folder
+            selected = 0
+            purgeArmed = null
+            reload()
+            return
+        }
+        val file = e.file ?: return
         if (inTrash) {
-            store.restore(e.file)
+            store.restore(file)
             actions.changed()
             reload()
         } else {
             dialog.dismiss()
-            actions.open(e.file)
+            actions.open(file)
         }
     }
 
     private fun delete(i: Int) {
         val e = entries.getOrNull(i) ?: return
+        val file = e.file ?: return // 不删文件夹
         if (inTrash) {
             // 彻底删除不可恢复：第一次只是“上膛”，再按一次才删
-            if (purgeArmed != e.file) { purgeArmed = e.file; selected = i; render(); return }
-            store.purge(e.file)
+            if (purgeArmed != file) { purgeArmed = file; selected = i; render(); return }
+            store.purge(file)
             purgeArmed = null
         } else {
-            store.moveToTrash(e.file)
+            store.moveToTrash(file)
             actions.changed()
         }
         reload()
@@ -339,7 +396,7 @@ class DocManagerPanel(
 
     private fun retitle(i: Int) {
         if (inTrash) return
-        val e = entries.getOrNull(i) ?: return
-        actions.retitle(e.file) { reload() }
+        val file = entries.getOrNull(i)?.file ?: return
+        actions.retitle(file) { reload() }
     }
 }

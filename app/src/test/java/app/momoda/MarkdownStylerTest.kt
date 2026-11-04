@@ -79,6 +79,27 @@ class MarkdownStylerTest {
         styler.restyleAll(t)
         assertEquals(first, t.spans.map { "${it.what.javaClass.simpleName}[${it.start},${it.end})" }.sorted())
     }
+
+    @Test
+    fun frontMatterIsFadedNotHeading() {
+        // 别的笔记应用写的 YAML 头：整行淡显，结尾的 --- 不是分隔线；之后的 # 才是标题
+        val t = SpanText("---\ntitle: x\n---\n# 标题")
+        styler.restyleAll(t)
+        val faded = t.spans.filter { it.what is MarkerSpan }.map { t.toString().substring(it.start, it.end) }
+        assertEquals(true, faded.containsAll(listOf("---", "title: x")))
+        assertEquals(0, t.spans.count { it.what is RuleSpan })
+        assertEquals(listOf("标题"), t.spans.filter { it.what is HeadingSpan }.map { t.toString().substring(it.start, it.end) })
+    }
+
+    @Test
+    fun closingFrontMatterRestylesEarlierLines() {
+        // 先只有开头的 ---（不是 YAML 头），打完结尾的 --- 后，前面的行也要变成淡显
+        val t = SpanText("---\n## a")
+        styler.restyleAll(t)
+        t.append("\n---")
+        styler.restyle(t, t.length - 3, t.length)
+        assertEquals(0, t.spans.count { it.what is HeadingSpan })
+    }
 }
 
 /** 单测用的 Editable：JVM 上 android.text 只有空壳。只实现 [MarkdownStyler] 用到的部分，样式位置不随编辑移动。 */
@@ -131,4 +152,5 @@ class SpanText(text: String) : Editable {
     override fun clearSpans() { spans.clear() }
     override fun setFilters(filters: Array<out InputFilter>?) = Unit
     override fun getFilters(): Array<InputFilter> = emptyArray()
+
 }

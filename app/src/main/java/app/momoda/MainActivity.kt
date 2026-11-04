@@ -302,8 +302,8 @@ class MainActivity : Activity() {
         handler.removeCallbacks(clockRunnable)
         save()
         // 离开 App 也算“离开文档”：文件名跟上标题
-        doc = store.syncNameWithTitle(doc, editor.text.toString())
-        store.lastDocName = doc.name
+        doc = store.syncNameWithTitle(doc, editor.text.toString(), docFollowsTitle)
+        store.lastDocName = store.key(doc)
         autoSync(minIntervalMs = 2 * 60_000L)
     }
 
@@ -344,15 +344,20 @@ class MainActivity : Activity() {
     private fun open(file: File) {
         if (::doc.isInitialized && file != doc) {
             val left = leaveCurrent()
-            if (left != null) store.previousDocName = left.name
+            if (left != null) store.previousDocName = store.key(left)
         }
         loadDoc(file)
     }
 
+    /** 当前文档的文件名是不是墨墨打起的（打开时判断）：是的话离开时文件名跟着标题改，别的应用起的名字不动。 */
+    private var docFollowsTitle = false
+
     private fun loadDoc(file: File) {
         doc = file
-        store.lastDocName = file.name
-        editor.load(store.read(file))
+        store.lastDocName = store.key(file)
+        val text = store.read(file)
+        docFollowsTitle = store.namedByMomoda(file, text)
+        editor.load(text)
         dirty = false
         val c = store.cursorOf(file)
         editor.setSelection(if (c in 0..editor.text.length) c else editor.text.length)
@@ -370,7 +375,7 @@ class MainActivity : Activity() {
             store.delete(doc)
             return null
         }
-        return store.syncNameWithTitle(doc, text)
+        return store.syncNameWithTitle(doc, text, docFollowsTitle)
     }
 
     private fun save() {
@@ -395,7 +400,8 @@ class MainActivity : Activity() {
                 if (copy != null) {
                     toast("《${doc.nameWithoutExtension}》被其他程序修改过，你的版本另存为《${copy.nameWithoutExtension}》")
                     doc = copy
-                    store.lastDocName = copy.name
+                    docFollowsTitle = false // “标题 冲突 日期”这个名字留着，一看就知道是冲突副本
+                    store.lastDocName = store.key(copy)
                 }
                 dirty = false
                 if (saveError != null) { saveError = null; refreshChrome() }
@@ -427,19 +433,26 @@ class MainActivity : Activity() {
 
     private val dateFmt = SimpleDateFormat("M月d日 HH:mm", Locale.CHINA)
 
-    /** 快速切换（Ctrl+O）：标题 + 修改时间 · 字数，支持拼音首字母搜索。 */
-    private fun showSwitcher() {
+    /**
+     * 快速切换（Ctrl+O）：所有文件夹里的文档按修改时间排成一列，标题 + 所在文件夹 · 修改时间 · 字数；
+     * 拼音首字母搜索也搜文件夹名。
+     */
+    private fun showSwitcher() = freshThen(::showSwitcherNow)
+
+    private fun showSwitcherNow() {
         save()
         val files = store.list()
         val items = files.map { f ->
             val s = if (f == doc) DocSummaries.summarize(editor.text.toString()) else store.summaries.of(f)
             val title = s.title ?: f.nameWithoutExtension
+            val folder = store.folderOf(f)
             val detail = buildString {
+                if (folder.isNotEmpty()) append(folder).append("/ · ")
                 append(dateFmt.format(Date(f.lastModified())))
                 append(" · ").append(TextStats.format(s.words)).append(" 字")
                 if (f == doc) append(" · 当前")
             }
-            InkItem(title, detail)
+            InkItem(title, detail, search = if (folder.isEmpty()) title else "$title $folder")
         }
         InkList.show(this, "文档（${files.size}）", items, font, onDismiss = ::returnToEditor) { i ->
             if (files[i] != doc) open(files[i])
@@ -456,14 +469,16 @@ class MainActivity : Activity() {
             val prefix = marker.ifEmpty { "# " }.trimEnd() + " "
             t.replace(0, firstLineEnd, prefix + newTitle.trim())
             save()
-            doc = store.syncNameWithTitle(doc, editor.text.toString())
-            store.lastDocName = doc.name
+            doc = store.syncNameWithTitle(doc, editor.text.toString(), docFollowsTitle)
+            store.lastDocName = store.key(doc)
             refreshChrome()
         }
     }
 
     /** 全屏文档管理页（含回收站）。 */
-    private fun showManager() {
+    private fun showManager() = freshThen(::showManagerNow)
+
+    private fun showManagerNow() {
         save()
         DocManagerPanel(this, store, font, current = { doc }, actions = object : DocManagerPanel.Actions {
             override fun open(file: File) { if (file != doc) this@MainActivity.open(file) }
@@ -474,8 +489,8 @@ class MainActivity : Activity() {
                     if (file == doc) {
                         editor.text.replace(0, editor.text.length, Titles.withTitle(editor.text.toString(), newTitle))
                         save()
-                        doc = store.syncNameWithTitle(doc, editor.text.toString())
-                        store.lastDocName = doc.name
+                        doc = store.syncNameWithTitle(doc, editor.text.toString(), docFollowsTitle)
+                        store.lastDocName = store.key(doc)
                         refreshChrome()
                     } else {
                         store.retitle(file, newTitle)
@@ -899,6 +914,9 @@ class MainActivity : Activity() {
             SettingsPanel.Row("Zen 模式", { onOff(!settings.chrome) }, { settings.chrome = !settings.chrome; applySettings() }, isToggle = true, hint = "隐藏页眉页脚 · Ctrl+."),
             SettingsPanel.Row("专注模式", { onOff(settings.focus) }, { settings.focus = !settings.focus; applySettings() }, isToggle = true, hint = "只突出当前段落 · Ctrl+Shift+F"),
             SettingsPanel.Row("Vim 模式", { onOff(settings.vim) }, { settings.vim = !settings.vim; applySettings() }, isToggle = true, hint = "Ctrl+Shift+V"),
+            SettingsPanel.Row("新文档放在", { store.newDocFolder.ifEmpty { "根目录" } }, { d ->
+                store.newDocFolder = step(newDocFolderChoices(), store.newDocFolder, d)
+            }, hint = "Ctrl+N 新建的文档"),
             *einkRows().toTypedArray(),
             SettingsPanel.Row("自动检查更新", { onOff(settings.autoUpdate) }, { settings.autoUpdate = !settings.autoUpdate }, isToggle = true),
             SettingsPanel.Row("检查更新", { updates.latest?.let { "安装 ${it.version}" } ?: "当前 $versionName" }, {
@@ -916,7 +934,12 @@ class MainActivity : Activity() {
         openSettings = SettingsPanel(this, font, rows, footnote, onDismiss = { openSettings = null; returnToEditor() }).also { it.show() }
     }
 
-    /** 墨水屏刷新的设置项；不能控制刷新的设备上没有。 */
+    /** “新文档放在”可选的文件夹：根目录、已有文档的文件夹，再加一个建议的 momoda。 */
+    private fun newDocFolderChoices(): List<String> =
+        (listOf("", "momoda") + store.list().map { store.folderOf(it) } + store.newDocFolder).distinct()
+            .sortedWith(compareBy({ it.isNotEmpty() }, { it }))
+
+        /** 墨水屏刷新的设置项；不能控制刷新的设备上没有。 */
     private fun einkRows(): List<SettingsPanel.Row> {
         if (eink.vendor == null) return emptyList()
         return listOf(
@@ -1123,14 +1146,30 @@ class MainActivity : Activity() {
         syncNow(force = false)
     }
 
-    private fun syncNow(force: Boolean) {
-        if (!sync.configured) { if (force) showSyncConfig(); return }
-        if (syncing) return
+    /**
+     * 打开文档列表前：仓库是多个应用共用的“大本营”，别处可能刚推上来新文档。
+     * 开着自动同步、距上次同步超过 2 分钟时先同步一次再显示；最多等 5 秒，没同步完也先显示。
+     */
+    private fun freshThen(show: () -> Unit) {
+        val stale = sync.auto && sync.configured && !syncing && isOnline() &&
+            System.currentTimeMillis() - syncPrefs.getLong("lastSync", 0) >= 2 * 60_000L
+        if (!stale) { show(); return }
+        var shown = false
+        val go = Runnable { if (!shown) { shown = true; show() } }
+        handler.postDelayed(go, 5000)
+        syncNow(force = false) { handler.removeCallbacks(go); go.run() }
+    }
+
+    /** [onDone] 在同步结束（成功、失败或没有开始）后调用。 */
+    private fun syncNow(force: Boolean, onDone: (() -> Unit)? = null) {
+        if (!sync.configured) { if (force) showSyncConfig(); onDone?.invoke(); return }
+        if (syncing) { onDone?.invoke(); return }
         if (!isOnline()) {
             // 没网时不去试：显示“离线”，联网后 [networkCallback] 会自动再同步
             syncStatus = "离线"
             refreshChrome()
             if (force) toast("没有网络，联网后会自动同步")
+            onDone?.invoke()
             return
         }
         syncing = true
@@ -1162,6 +1201,7 @@ class MainActivity : Activity() {
                     if (force) toast(if (offline) "连不上网络，联网后会自动同步" else "同步失败：${it.message ?: it.javaClass.simpleName}")
                 }
                 refreshChrome()
+                onDone?.invoke()
             }
         }, "github-sync").apply { isDaemon = true }.start()
     }

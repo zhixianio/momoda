@@ -130,10 +130,17 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
     /** 普通段落段首缩进两字（标题、列表、引用、分隔线不缩进）。 */
     var indent = false
 
+    /** 开头 YAML 头的结束位置（见 [Titles.frontMatterEnd]），上一次排版时算的。 */
+    private var frontEnd = 0
+
     /** 重新渲染与 [from, to) 有交集的所有行。 */
     fun restyle(text: Editable, from: Int, to: Int) {
         var lineStart = lineStartOf(text, from.coerceIn(0, text.length))
         var stop = to.coerceIn(0, text.length)
+        // YAML 头的范围变了（例如刚打完结尾的 ---）：头里头外换了身份的那些行都要重排
+        val fe = Titles.frontMatterEnd(text)
+        if (fe != frontEnd) { lineStart = 0; stop = maxOf(stop, fe, frontEnd).coerceAtMost(text.length) }
+        frontEnd = fe
         // 编辑会把样式拉长到相邻几行：SpannableStringBuilder 把段落样式的端点挪到下一个换行之后
         // （在引用行末回车、再在空的“> ”上回车），在标题、粗体中间回车时字符样式也跟着跨到下一行。
         // styleLine 只处理落在本行内的样式，拉长的会留下来：引用竖线叠成好几条、延伸到下面的段落，
@@ -196,6 +203,8 @@ class MarkdownStyler(private val dp: Float, private val measure: (CharSequence) 
         fun char(span: MdSpan, s: Int, e: Int) { if (e > s) out += Want(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
         fun para(span: MdSpan, s: Int, e: Int) { if (e > s) out += Want(span, s, e, Spanned.SPAN_PARAGRAPH) }
         if (end <= start) return out
+        // YAML 头（别的笔记应用写的元数据）：整行淡显，不当作标题、分隔线
+        if (start < frontEnd) { char(MarkerSpan(), start, end); return out }
         val line = text.subSequence(start, end).toString()
         val styles = Markdown.parseLine(line)
         if (indent && line.isNotBlank() && styles.none { it.kind in BLOCK_KINDS }) {
