@@ -270,13 +270,15 @@ class GitHubSync(
     private fun applyRemoteTimes(owner: String, name: String, written: Map<String, Pair<String, String>>, onlyEarlier: Boolean): Boolean {
         if (written.isEmpty()) return true
         val times = runCatching { lastCommitTimes(owner, name, written.values.map { it.first }.distinct()) }.getOrNull() ?: return false
-        synchronized(lock) {
-            for ((localPath, remoteAndSha) in written) {
-                val time = times[remoteAndSha.first] ?: continue
-                val f = File(dir, localPath)
-                if (onlyEarlier && f.lastModified() <= time) continue
-                if (f.isFile && SyncPlan.blobSha(f.readBytes()) == remoteAndSha.second) f.setLastModified(time)
-            }
+        for ((localPath, remoteAndSha) in written) {
+            val time = times[remoteAndSha.first] ?: continue
+            val f = File(dir, localPath)
+            val seen = f.lastModified()
+            if (!f.isFile || (onlyEarlier && seen <= time)) continue
+            // 读文件、算 sha 不拿锁（文档多时要好一会儿，不能挡住编辑器保存）；
+            // 改时间时再拿锁核对修改时间没变：这期间保存过的，不去动它
+            if (SyncPlan.blobSha(f.readBytes()) != remoteAndSha.second) continue
+            synchronized(lock) { if (f.lastModified() == seen) f.setLastModified(time) }
         }
         return true
     }
@@ -291,8 +293,10 @@ class GitHubSync(
             }.joinToString(" ")
             val query = "query { repository(owner: ${JSONObject.quote(owner)}, name: ${JSONObject.quote(name)}) { " +
                 "ref(qualifiedName: ${JSONObject.quote("refs/heads/${target.branch}")}) { target { ... on Commit { $fields } } } } }"
-            val commit = api("POST", "/graphql", JSONObject().put("query", query))
-                .optJSONObject("data")?.optJSONObject("repository")?.optJSONObject("ref")?.optJSONObject("target") ?: continue
+            val r = api("POST", "/graphql", JSONObject().put("query", query))
+            // GraphQL 出错时常常仍是 HTTP 200，错误放在 errors 里：当作失败，下次同步再补
+            if (r.has("errors") || r.isNull("data")) error("GraphQL：${r.optJSONArray("errors")?.optJSONObject(0)?.optString("message").orEmpty()}")
+            val commit = r.optJSONObject("data")?.optJSONObject("repository")?.optJSONObject("ref")?.optJSONObject("target") ?: continue
             chunk.forEachIndexed { i, p ->
                 val date = commit.optJSONObject("f$i")?.optJSONArray("nodes")?.optJSONObject(0)?.optString("committedDate").orEmpty()
                 runCatching { iso.parse(date)?.time }.getOrNull()?.let { out[p] = it }

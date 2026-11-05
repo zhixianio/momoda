@@ -15,6 +15,8 @@ class FakeGitHub(private val repo: String = "me/notes", private val branch: Stri
     val epoch = 1_760_000_000_000L
     /** 为 true 时 GraphQL 查询失败（模拟没有权限、接口变化）。 */
     var failGraphql = false
+    /** 为 true 时 GraphQL 照常返回 200，但带着 errors、data 为 null（GitHub 上权限不够、限流时就是这样）。 */
+    var graphqlErrors = false
     private var head: String
     private var seq = 0
 
@@ -96,6 +98,8 @@ class FakeGitHub(private val repo: String = "me/notes", private val branch: Stri
             }
             method == "POST" && path == "/graphql" -> {
                 if (failGraphql) throw GitHubSync.HttpError(403, "graphql not allowed")
+                if (graphqlErrors) return JSONObject().put("data", JSONObject.NULL)
+                    .put("errors", JSONArray().put(JSONObject().put("message", "Resource not accessible by integration")))
                 val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
                     .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
                 val target = JSONObject()

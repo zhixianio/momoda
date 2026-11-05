@@ -258,4 +258,28 @@ class VimTextTest {
     @Test fun upperCaseDoesNotMatchHan() = assertEquals(null, VimText.findChar("我是", 0, 'S', forward = true, till = false) { py[it] })
 
     @Test fun withoutReadingsHanIsNotMatched() = assertEquals(null, VimText.findChar("我是", 0, 's', forward = true, till = false))
+
+    // 发版前审查找到的问题
+    @Test fun pairOnEmptyLineIsNull() {
+        assertEquals(null, VimText.pairObject("", 0, '(', around = false))
+        assertEquals(null, VimText.pairObject("a(b)\n", 5, '(', around = false))
+        assertEquals(null, VimText.pairObject("", 0, '"', around = false))
+    }
+
+    @Test fun cursorOnClosingQuote() {
+        val t = "\"abc\" and \"def\""
+        assertEquals("\"\" and \"def\"", cut(t, VimText.pairObject(t, 4, '"', around = false)))
+    }
+
+    @Test fun enclosingChineseQuotesBeatLaterAsciiPair() {
+        val t = "他说“你好”，然后写了 \"abc\"。"
+        assertEquals("他说“”，然后写了 \"abc\"。", cut(t, VimText.pairObject(t, 3, '"', around = false)))
+    }
+
+    @Test fun beforeFirstQuoteTakesNextPair() {
+        val t = "say \"hi\" ok"
+        assertEquals("say \"\" ok", cut(t, VimText.pairObject(t, 0, '"', around = false)))
+    }
+
+    @Test fun sentenceOnLeadingSpaceIsFirst() = assertEquals(VimText.Range(2, 4), VimText.sentenceObject("  A. B.", 0, around = false))
 }

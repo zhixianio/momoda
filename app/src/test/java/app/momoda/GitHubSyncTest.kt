@@ -47,6 +47,17 @@ class GitHubSyncTest {
         assertEquals(gh.lastChanged("a.md"), File(docs, "a.md").lastModified())
     }
 
+    @Test fun graphqlErrorsInOkResponseAreRetriedLater() {
+        // GraphQL 出错时仍是 200：不能记成“补过了”，下次同步要再补
+        gh.push(mapOf("a.md" to "a"))
+        gh.graphqlErrors = true
+        sync()
+        assertTrue(File(docs, "a.md").lastModified() > gh.lastChanged("a.md")!!)
+        gh.graphqlErrors = false
+        sync()
+        assertEquals(gh.lastChanged("a.md"), File(docs, "a.md").lastModified())
+    }
+
     @Test fun localEditTimesAreNotPushedLater() {
         // 在这台设备上写、推上去的文档：本地修改时间早于提交时间，不改
         val f = write("mine.md", "我写的").apply { setLastModified(gh.epoch - 3_600_000L) }

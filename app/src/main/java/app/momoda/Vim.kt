@@ -445,10 +445,19 @@ class Vim(
             'j' -> VimText.linesBetween(t, c, VimText.advanceLines(t, c, n))
             'k' -> VimText.linesBetween(t, VimText.advanceLines(t, c, -n), c)
             'G' -> VimText.linesBetween(t, c, t.length)
-            ')' -> { var e = c; repeat(n) { e = VimText.nextSentenceStart(t, e) }; VimText.Range(c, e) }
-            '(' -> { var b = c; repeat(n) { b = VimText.prevSentenceStart(t, b) }; VimText.Range(b, c) }
-            '}' -> { var e = c; repeat(n) { e = VimText.nextParagraphStart(t, e) }; VimText.Range(c, e) }
-            '{' -> { var b = c; repeat(n) { b = VimText.prevParagraphStart(t, b) }; VimText.Range(b, c) }
+            // 和 dw 一样不跨过段落分隔：d) 在一段的最后一句上只删到段尾，不把下一段并上来
+            ')' -> { var e = c; repeat(n) { e = VimText.nextSentenceStart(t, e) }; VimText.Range(c, minOf(e, VimText.lineEnd(t, c)).coerceAtLeast(c)) }
+            '(' -> { var b = c; repeat(n) { b = VimText.prevSentenceStart(t, b) }; VimText.Range(maxOf(b, VimText.lineStart(t, c)).coerceAtMost(c), c) }
+            '}' -> {
+                var e = c; repeat(n) { e = VimText.nextParagraphStart(t, e) }
+                val end = VimText.paragraphAt(t, c)?.let { it.last + 1 } ?: c
+                VimText.Range(c, minOf(e, end).coerceAtLeast(c))
+            }
+            '{' -> {
+                var b = c; repeat(n) { b = VimText.prevParagraphStart(t, b) }
+                val start = VimText.paragraphAt(t, c)?.first ?: c
+                VimText.Range(maxOf(b, start).coerceAtMost(c), c)
+            }
             else -> null
         }
     }

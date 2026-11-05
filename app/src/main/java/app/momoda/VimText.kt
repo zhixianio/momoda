@@ -326,7 +326,7 @@ object VimText {
     fun sentenceObject(t: CharSequence, at: Int, around: Boolean): Range? {
         val s = lineStart(t, at)
         val all = sentencesIn(t, s, lineEnd(t, at))
-        val one = all.firstOrNull { at >= it.start && at < it.end } ?: all.lastOrNull() ?: return null
+        val one = all.firstOrNull { at < it.end } ?: all.lastOrNull() ?: return null
         return Range(one.start, if (around) one.end else one.innerEnd)
     }
 
@@ -389,21 +389,23 @@ object VimText {
     fun pairObject(t: CharSequence, at: Int, key: Char, around: Boolean): Range? {
         val s = lineStart(t, at)
         val e = lineEnd(t, at)
-        var best: Pair<Int, Int>? = null
-        for (pair in pairsFor(key)) {
+        if (s == e) return null // 空行（空文档、文末的空行）
+        val found = pairsFor(key).mapNotNull { pair ->
             val (open, close) = pair[0] to pair[1]
-            val found = if (open == close) sameCharPair(t, at, open, s, e) else nestedPair(t, at, open, close, s, e)
-            if (found != null && (best == null || found.first > best.first)) best = found
+            if (open == close) sameCharPair(t, at, open, s, e) else nestedPair(t, at, open, close, s, e)
         }
-        val (o, c) = best ?: return null
+        // 先挑包着光标的最里面一对；都不包着（光标在第一对引号前面）时取光标后面最近的一对
+        val (o, c) = found.filter { (o, c) -> at in o..c }.maxByOrNull { it.first }
+            ?: found.minByOrNull { it.first } ?: return null
         return if (around) Range(o, c + 1) else Range(o + 1, c)
     }
 
     private fun nestedPair(t: CharSequence, at: Int, open: Char, close: Char, s: Int, e: Int): Pair<Int, Int>? {
         var depth = 0
-        var o = if (at < e && t[at] == close) at - 1 else at
+        val from = at.coerceAtMost(e - 1)
+        var o = if (t[from] == close) from - 1 else from
         while (o >= s) {
-            if (t[o] == close && o != at) depth++
+            if (t[o] == close) depth++
             else if (t[o] == open) { if (depth == 0) break; depth-- }
             o--
         }
@@ -418,10 +420,19 @@ object VimText {
         return null
     }
 
-    /** 两边一样的引号（"" ''）：光标前最近的一个和它后面的一个；光标在第一个引号之前时取后面第一对。 */
+    /**
+     * 两边一样的引号（"" ''）：按本段里从头数，光标前有奇数个引号就是在一对里面；
+     * 光标正好在右引号上时就是这一对；在引号外面时取光标后面的第一对。
+     */
     private fun sameCharPair(t: CharSequence, at: Int, q: Char, s: Int, e: Int): Pair<Int, Int>? {
-        val before = (s..minOf(at, e - 1)).filter { t[it] == q }
-        val o = if (before.size % 2 == 1) before.last() else (at until e).firstOrNull { t[it] == q } ?: return null
+        val i = at.coerceAtMost(e - 1)
+        val before = (s until i).filter { t[it] == q }
+        if (before.size % 2 == 1) {
+            if (t[i] == q) return before.last() to i // 光标在右引号上
+            val c = (i until e).firstOrNull { t[it] == q } ?: return null
+            return before.last() to c
+        }
+        val o = (i until e).firstOrNull { t[it] == q } ?: return null
         val c = (o + 1 until e).firstOrNull { t[it] == q } ?: return null
         return o to c
     }
