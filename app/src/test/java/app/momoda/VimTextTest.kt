@@ -228,4 +228,10 @@ class VimTextTest {
         assertEquals(',', VimText.replacementFor('a', ','))
         assertEquals('x', VimText.replacementFor('，', 'x'))
     }
+
+    @Test fun chineseCommaTargetAlsoMatchesAscii() =
+        assertEquals(2, VimText.findChar("ab,c，d", 0, '，', forward = true, till = false))
+
+    @Test fun nearestCommaWinsWhicheverKind() =
+        assertEquals(11, VimText.findChar("我们用了 Gboard，效果不错, ok", 0, ',', forward = true, till = false))
 }

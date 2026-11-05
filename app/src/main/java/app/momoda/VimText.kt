@@ -203,7 +203,12 @@ object VimText {
         '<' to "《〈", '>' to "》〉", '"' to "“”", '\'' to "‘’", '\\' to "、", '~' to "～", '-' to "—",
     )
 
-    fun matches(c: Char, target: Char): Boolean = c == target || fullWidth[target]?.contains(c) == true
+    /**
+     * [c] 算不算要找的 [target]：英文标点也匹配对应的中文标点，反过来也一样
+     * （有的输入法，例如 ChromeOS 的拼音，会把逗号键直接变成“，”交过来），取离光标最近的那一个。
+     */
+    fun matches(c: Char, target: Char): Boolean = c == target || fullWidth[target]?.contains(c) == true ||
+        fullWidth.entries.any { (ascii, cjk) -> target in cjk && (c == ascii || c in cjk) }
 
     /**
      * r 换成什么：光标处是中文标点时，英文标点键换成对应的中文标点（在“，”上按 r. 得到“。”）；
