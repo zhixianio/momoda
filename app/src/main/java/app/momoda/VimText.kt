@@ -207,8 +207,20 @@ object VimText {
      * [c] 算不算要找的 [target]：英文标点也匹配对应的中文标点，反过来也一样
      * （有的输入法，例如 ChromeOS 的拼音，会把逗号键直接变成“，”交过来），取离光标最近的那一个。
      */
-    fun matches(c: Char, target: Char): Boolean = c == target || fullWidth[target]?.contains(c) == true ||
-        fullWidth.entries.any { (ascii, cjk) -> target in cjk && (c == ascii || c in cjk) }
+    fun matches(c: Char, target: Char, readings: (Char) -> List<String>? = { null }): Boolean =
+        c == target || fullWidth[target]?.contains(c) == true ||
+            fullWidth.entries.any { (ascii, cjk) -> target in cjk && (c == ascii || c in cjk) } ||
+            initialMatches(c, target, readings)
+
+    /**
+     * 小写字母也匹配拼音以它开头的汉字（多音字任一读音都算）：普通模式下打不出汉字，`fs` 就跳到下一个“是”“说”。
+     * 照顾小鹤双拼的习惯：拼音里没有以 u、i、v 开头的音节，所以 u、i、v 分别找 sh、ch、zh 开头的字。
+     */
+    private fun initialMatches(c: Char, target: Char, readings: (Char) -> List<String>?): Boolean {
+        if (target !in 'a'..'z' || !TypingRules.isCjk(c)) return false
+        val prefix = when (target) { 'u' -> "sh"; 'i' -> "ch"; 'v' -> "zh"; else -> target.toString() }
+        return readings(c)?.any { it.startsWith(prefix) } == true
+    }
 
     /**
      * r 换成什么：光标处是中文标点时，英文标点键换成对应的中文标点（在“，”上按 r. 得到“。”）；
@@ -224,7 +236,11 @@ object VimText {
      * [till] 是 t / T：停在那个字前面（往前找时是后面）。[repeat] 是 ; 和 , 重复 t / T：
      * 光标正好紧挨着目标时跳过它，找下一个，否则会原地不动。
      */
-    fun findChar(t: CharSequence, from: Int, target: Char, forward: Boolean, till: Boolean, n: Int = 1, repeat: Boolean = false): Int? {
+    fun findChar(
+        t: CharSequence, from: Int, target: Char, forward: Boolean, till: Boolean, n: Int = 1, repeat: Boolean = false,
+        /** 汉字的拼音读音（[Pinyin.readings]）：有的话小写字母也按拼音首字母找汉字。 */
+        readings: (Char) -> List<String>? = { null },
+    ): Int? {
         val s = lineStart(t, from)
         val e = lineEnd(t, from)
         var i = from
@@ -234,7 +250,7 @@ object VimText {
         while (true) {
             i += if (forward) 1 else -1
             if (i < s || i >= e) return null
-            if (matches(t[i], target) && ++found == n) return if (!till) i else if (forward) i - 1 else i + 1
+            if (matches(t[i], target, readings) && ++found == n) return if (!till) i else if (forward) i - 1 else i + 1
         }
     }
 

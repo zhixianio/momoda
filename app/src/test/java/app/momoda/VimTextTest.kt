@@ -234,4 +234,28 @@ class VimTextTest {
 
     @Test fun nearestCommaWinsWhicheverKind() =
         assertEquals(11, VimText.findChar("我们用了 Gboard，效果不错, ok", 0, ',', forward = true, till = false))
+
+    private val py = mapOf('我' to listOf("wo"), '是' to listOf("shi"), '说' to listOf("shuo", "shui"), '长' to listOf("chang", "zhang"),
+        '中' to listOf("zhong"), '出' to listOf("chu"), '爱' to listOf("ai"))
+
+    @Test fun letterFindsHanByInitial() = assertEquals(2, VimText.findChar("我爱是", 0, 's', forward = true, till = false) { py[it] })
+
+    @Test fun letterStillFindsItself() = assertEquals(1, VimText.findChar("xs是", 0, 's', forward = true, till = false) { py[it] })
+
+    @Test fun polyphoneMatchesAnyReading() {
+        assertEquals(1, VimText.findChar("我长", 0, 'c', forward = true, till = false) { py[it] })
+        assertEquals(1, VimText.findChar("我长", 0, 'z', forward = true, till = false) { py[it] })
+    }
+
+    @Test fun shuangpinKeysForZhChSh() {
+        assertEquals(2, VimText.findChar("我爱说", 0, 'u', forward = true, till = false) { py[it] })
+        assertEquals(1, VimText.findChar("我出", 0, 'i', forward = true, till = false) { py[it] })
+        assertEquals(1, VimText.findChar("我中", 0, 'v', forward = true, till = false) { py[it] })
+    }
+
+    @Test fun zeroInitialSyllable() = assertEquals(1, VimText.findChar("我爱", 0, 'a', forward = true, till = false) { py[it] })
+
+    @Test fun upperCaseDoesNotMatchHan() = assertEquals(null, VimText.findChar("我是", 0, 'S', forward = true, till = false) { py[it] })
+
+    @Test fun withoutReadingsHanIsNotMatched() = assertEquals(null, VimText.findChar("我是", 0, 's', forward = true, till = false))
 }

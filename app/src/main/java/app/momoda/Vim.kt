@@ -390,7 +390,8 @@ class Vim(
         val forward = kind == 'f' || kind == 't'
         val c = cursor
         val op = operator
-        val to = VimText.findChar(text, c, target, forward, till = kind == 't' || kind == 'T', n = if (op != null) operatorCount * n else n, repeat = repeat)
+        val to = VimText.findChar(text, c, target, forward, till = kind == 't' || kind == 'T', n = if (op != null) operatorCount * n else n,
+            repeat = repeat, readings = Pinyin::readings)
         if (op != null) {
             operator = null
             if (to != null) apply(op, VimText.findRange(c, to, forward))
