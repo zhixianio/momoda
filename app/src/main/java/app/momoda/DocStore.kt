@@ -29,6 +29,21 @@ class DocStore(private val context: Context) {
     val isPublic: Boolean get() = dir == publicDir()
     private val trash get() = File(dir, ".trash")
 
+    /**
+     * 本地文档改了几次（写入、新建、改名、删除、移进或移出回收站）。同步开始时记下这个数，
+     * 结束时没变就说明这次同步把改动都传上去了。同步自己写文件不经过这里，不算。
+     */
+    var localChanges = 0L
+        private set
+
+    /** 每次本地改动后调用（主线程）。 */
+    var onLocalChange: (() -> Unit)? = null
+
+    private fun changed() {
+        localChanges++
+        onLocalChange?.invoke()
+    }
+
     /** 所有文档，含子文件夹，最近修改的在前。范围和同步一样：不含以点开头的目录（回收站等）和 fonts/。 */
     fun list(): List<File> = dir.walkTopDown()
         .onEnter { it == dir || (!it.name.startsWith(".") && !(it.parentFile == dir && it.name == "fonts")) }
@@ -57,6 +72,7 @@ class DocStore(private val context: Context) {
             writeText("# ")
             // 记下是墨墨打建的：以后文件名跟着标题改（见 namedByMomoda）
             prefs.edit().putBoolean("made:${key(this)}", true).apply()
+            changed()
         }
     }
 
@@ -102,6 +118,7 @@ class DocStore(private val context: Context) {
             tmp.delete()
         }
         known.remember(file.absolutePath, file.lastModified(), text)
+        changed()
     }
 
     /**
@@ -133,6 +150,7 @@ class DocStore(private val context: Context) {
     fun delete(file: File) {
         file.delete()
         forget(file)
+        changed()
     }
 
     fun moveToTrash(file: File) {
@@ -144,6 +162,7 @@ class DocStore(private val context: Context) {
             prefs.edit().apply { if (folder.isEmpty()) remove("trashFrom:$name") else putString("trashFrom:$name", folder) }.apply()
         }
         forget(file)
+        changed()
     }
 
     // ---------- 回收站 ----------
@@ -159,6 +178,7 @@ class DocStore(private val context: Context) {
         val target = File(folder, name)
         if (!file.renameTo(target)) return file
         prefs.edit().remove("trashFrom:${file.name}").apply()
+        changed()
         return target
     }
 
@@ -187,6 +207,7 @@ class DocStore(private val context: Context) {
         if (made) prefs.edit().putBoolean("made:${key(target)}", true).apply()
         if (lastDocName == key(file)) lastDocName = key(target)
         if (previousDocName == key(file)) previousDocName = key(target)
+        changed()
         return target
     }
 

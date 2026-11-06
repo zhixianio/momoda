@@ -132,6 +132,7 @@ class MainActivity : Activity() {
             getSharedPreferences("updates", Context.MODE_PRIVATE).edit().clear().apply()
         }
         store = DocStore(this)
+        store.onLocalChange = ::afterLocalChange
         val tStore = SystemClock.uptimeMillis()
 
         editor = EditorView(this)
@@ -291,7 +292,8 @@ class MainActivity : Activity() {
             // 离开期间文档被别的程序改过，而我们没有未保存的修改：直接载入新版本
             if (doc.exists()) loadDoc(doc) else loadDoc(store.openLastOrCreate())
         }
-        if (::doc.isInitialized) autoSync(minIntervalMs = 10 * 60_000L)
+        // 有没传上去的改动（例如上次离开时没网、同步到一半 App 被关了）：不管隔了多久都先传
+        if (::doc.isInitialized) autoSync(minIntervalMs = if (pendingUpload) 0 else 10 * 60_000L)
     }
 
     override fun onPause() {
@@ -304,10 +306,13 @@ class MainActivity : Activity() {
         // 离开 App 也算“离开文档”：文件名跟上标题
         doc = store.syncNameWithTitle(doc, editor.text.toString(), docFollowsTitle)
         store.lastDocName = store.key(doc)
-        autoSync(minIntervalMs = 2 * 60_000L)
+        // 有改动就马上传，不管上次同步是多久以前：合上 Chromebook、切去别的 App，字都先到 GitHub。
+        // 没改动时只是为了拿别处的新内容，2 分钟内同步过就不用了
+        autoSync(minIntervalMs = if (pendingUpload) 0 else 2 * 60_000L)
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(idleSync)
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         if (updatesLazy.isInitialized()) updates.close()
         super.onDestroy()
@@ -1140,7 +1145,41 @@ class MainActivity : Activity() {
 
     private val syncPrefs by lazy { getSharedPreferences("sync", Context.MODE_PRIVATE) }
 
-    /** 自动同步：离开 App 时（距上次超过 2 分钟）和回到 App 时（距上次超过 10 分钟）。 */
+    /**
+     * 有没传上去的本地改动。存在 prefs 里：App 被关掉、重启后也知道要先传。
+     * 同步成功、并且同步期间没有新改动时才清掉。
+     */
+    private var pendingUpload: Boolean
+        get() = syncPrefs.getBoolean("pendingUpload", false)
+        set(v) { if (pendingUpload != v) syncPrefs.edit().putBoolean("pendingUpload", v).apply() }
+
+    /** 本地文档改了（[DocStore.onLocalChange]）：记下要上传，停笔 [IDLE_SYNC_MS] 后自动同步一次。 */
+    private fun afterLocalChange() {
+        pendingUpload = true
+        scheduleIdleSync(IDLE_SYNC_MS)
+    }
+
+    private val idleSync = Runnable { idleSyncNow() }
+
+    private fun scheduleIdleSync(delayMs: Long) {
+        handler.removeCallbacks(idleSync)
+        handler.postDelayed(idleSync, delayMs)
+    }
+
+    /**
+     * 停笔一段时间后自动同步：App 一直开着、或者直接合上设备，字也会传上去。
+     * 正在用输入法拼字、或者已经在同步时先不打扰，过一会儿再看；没网时 [syncNow] 会显示“离线”，联网后自动补上。
+     */
+    private fun idleSyncNow() {
+        if (!sync.auto || !sync.configured || !pendingUpload) return
+        if (syncing || android.view.inputmethod.BaseInputConnection.getComposingSpanStart(editor.text) >= 0) {
+            scheduleIdleSync(30_000L)
+            return
+        }
+        syncNow(force = false)
+    }
+
+    /** 自动同步：有没传上去的改动时，离开 App、回到 App、停笔 3 分钟后都会同步；没有改动时，离开 App（距上次超过 2 分钟）和回到 App（距上次超过 10 分钟）时同步。 */
     private fun autoSync(minIntervalMs: Long) {
         if (!sync.auto || !sync.configured) return
         if (System.currentTimeMillis() - syncPrefs.getLong("lastSync", 0) < minIntervalMs) return
@@ -1175,6 +1214,8 @@ class MainActivity : Activity() {
         }
         syncing = true
         save()
+        // 从这里开始的改动这次同步不一定带上：结束时数一数，有新改动就还算没传完
+        val changesAtStart = store.localChanges
         syncStatus = "同步中"
         refreshChrome()
         val engine = makeSync()
@@ -1184,6 +1225,7 @@ class MainActivity : Activity() {
                 syncing = false
                 r.onSuccess { res ->
                     syncPrefs.edit().putLong("lastSync", System.currentTimeMillis()).apply()
+                    if (store.localChanges == changesAtStart) pendingUpload = false
                     syncStatus = ""
                     syncedAt = System.currentTimeMillis()
                     if (force || res.conflicts.isNotEmpty() || res.trashed > 0 || res.skipped.isNotEmpty()) toast("同步：${res.summary()}")
@@ -1384,3 +1426,6 @@ class MainActivity : Activity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
+
+/** 停笔多久后自动同步（有没传上去的改动时）。 */
+private const val IDLE_SYNC_MS = 3 * 60_000L
