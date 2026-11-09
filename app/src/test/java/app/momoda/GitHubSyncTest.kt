@@ -263,5 +263,26 @@ class GitHubSyncTest {
         assertEquals("内容", read("A.md"))
     }
 
+    @Test fun remoteFolderRenameMovesLocalFilesKeepingTimes() {
+        write("e5/口语稿.md", "口语")
+        write("e5/调研.md", "调研")
+        sync()
+        val t = 1_700_000_000_000L
+        File(docs, "e5/口语稿.md").setLastModified(t)
+        gh.push(mapOf("e5/口语稿.md" to null, "e5/调研.md" to null, "e7/口语稿.md" to "口语", "e7/调研.md" to "调研"))
+        val r = sync()
+        assertEquals(setOf("e5/口语稿.md" to "e7/口语稿.md", "e5/调研.md" to "e7/调研.md"), r.moved.toSet())
+        assertEquals(0, r.trashed)
+        assertEquals(0, r.downloaded)
+        assertEquals("口语", read("e7/口语稿.md"))
+        // 修改时间是这篇真正改的时间，不是改名的那一刻；空了的旧文件夹不留
+        assertEquals(t, File(docs, "e7/口语稿.md").lastModified())
+        assertFalse(File(docs, "e5").exists())
+        assertTrue(trash.list()!!.isEmpty())
+        // 下次同步什么都不用做
+        val again = sync()
+        assertEquals(0, again.uploaded + again.downloaded + again.deleted + again.trashed + again.moved.size)
+    }
+
     @Test fun targetToStringHidesToken() = assertFalse(target().toString().contains("secret-token"))
 }

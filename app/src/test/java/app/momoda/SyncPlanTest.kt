@@ -2,6 +2,7 @@ package app.momoda
 
 import app.momoda.SyncPlan.Action.Conflict
 import app.momoda.SyncPlan.Action.DeleteRemote
+import app.momoda.SyncPlan.Action.MoveLocal
 import app.momoda.SyncPlan.Action.Download
 import app.momoda.SyncPlan.Action.TrashLocal
 import app.momoda.SyncPlan.Action.Upload
@@ -105,5 +106,47 @@ class SyncPlanTest {
         val local = mapOf("a.md" to "2", "a.remote-1019-0900.md" to "9")
         val actions = SyncPlan.plan(local, mapOf("a.md" to "3"), mapOf("a.md" to "1"), "1020-0816")
         assertEquals(Conflict("a.md", "a.remote-1020-0816.md"), actions.first { it.path == "a.md" })
+    }
+
+    // ---------- 远端改名 ----------
+
+    @Test fun remoteFolderRenameMovesLocal() {
+        val local = mapOf("e5/a.md" to "1", "e5/b.md" to "2")
+        val remote = mapOf("e7/a.md" to "1", "e7/b.md" to "2")
+        assertEquals(setOf(MoveLocal("e5/a.md", "e7/a.md"), MoveLocal("e5/b.md", "e7/b.md")), plan(local, remote, local).toSet())
+    }
+
+    @Test fun remoteFileRenameMovesLocal() =
+        assertEquals(listOf(MoveLocal("a.md", "b.md")), plan(mapOf("a.md" to "1"), mapOf("b.md" to "1"), mapOf("a.md" to "1")))
+
+    @Test fun renamedAndEditedFallsBackToTrashAndDownload() =
+        assertEquals(setOf(TrashLocal("a.md"), Download("b.md")), plan(mapOf("a.md" to "1"), mapOf("b.md" to "2"), mapOf("a.md" to "1")).toSet())
+
+    @Test fun renamedButLocalEditedIsNotMoved() =
+        assertEquals(setOf(Upload("a.md"), Download("b.md")), plan(mapOf("a.md" to "3"), mapOf("b.md" to "1"), mapOf("a.md" to "1")).toSet())
+
+    @Test fun sameContentPrefersSameFileName() {
+        // 两篇内容一样（例如都是空模板）：只挪了文件夹的那篇配给同名的
+        val local = mapOf("x/a.md" to "1", "x/b.md" to "1")
+        val remote = mapOf("y/b.md" to "1", "y/a.md" to "1")
+        assertEquals(setOf(MoveLocal("x/a.md", "y/a.md"), MoveLocal("x/b.md", "y/b.md")), plan(local, remote, local).toSet())
+    }
+
+    @Test fun extraCopiesStayAsTrashOrDownload() {
+        // 远端删了两篇一样的、只新建了一篇：配一对，剩下的照旧移进回收站
+        val local = mapOf("a.md" to "1", "b.md" to "1")
+        assertEquals(setOf(MoveLocal("a.md", "c.md"), TrashLocal("b.md")), plan(local, mapOf("c.md" to "1"), local).toSet())
+    }
+
+    @Test fun caseOnlyRenameIsNotMoved() {
+        val actions = plan(mapOf("a.md" to "1"), mapOf("A.md" to "1"), mapOf("a.md" to "1"))
+        assertEquals(listOf(TrashLocal("a.md"), Download("A.md")), actions)
+    }
+
+    @Test fun downloadOverExistingLocalIsNotAMoveTarget() {
+        // 本地已有 b.md（远端改了它），不能把 a.md 挪过去盖掉
+        val local = mapOf("a.md" to "1", "b.md" to "5")
+        val base = mapOf("a.md" to "1", "b.md" to "5")
+        assertEquals(setOf(TrashLocal("a.md"), Download("b.md")), plan(local, mapOf("b.md" to "1"), base).toSet())
     }
 }

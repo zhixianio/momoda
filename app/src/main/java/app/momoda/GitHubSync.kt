@@ -85,6 +85,8 @@ class GitHubSync(
      * 两边不同时直接下载远端的，不当作冲突另存一份。每台新设备第一次同步都会碰到。
      */
     private val disposable: (path: String, bytes: ByteArray) -> Boolean = { _, _ -> false },
+    /** 跟着远端改名挪了一个本地文件（在 [lock] 里调用，紧接着挪动之后：编辑器下一次保存前就能知道）。 */
+    private val onMoved: (from: String, to: String) -> Unit = { _, _ -> },
 ) {
     /** 同步的目标。token 不出现在 toString 里，以免被写进日志。 */
     class Target(val apiBase: String, val repo: String, val branch: String, val subdir: String, val token: String) {
@@ -100,12 +102,15 @@ class GitHubSync(
         val uploaded: Int, val downloaded: Int, val deleted: Int, val trashed: Int, val conflicts: List<String>,
         /** 和别的文件只差大小写、本地放不下而没有同步的远端文件。 */
         val skipped: List<String> = emptyList(),
+        /** 跟着远端改名、挪了位置的本地文件：（旧路径，新路径）。 */
+        val moved: List<Pair<String, String>> = emptyList(),
     ) {
-        val changedLocal get() = downloaded + trashed + conflicts.size > 0
+        val changedLocal get() = downloaded + trashed + conflicts.size + moved.size > 0
         fun summary() = buildString {
             val parts = mutableListOf<String>()
             if (uploaded > 0) parts += "上传 $uploaded"
             if (downloaded > 0) parts += "下载 $downloaded"
+            if (moved.isNotEmpty()) parts += "跟着远端改名 ${moved.size}"
             if (deleted > 0) parts += "远端删除 $deleted"
             if (trashed > 0) parts += "移进回收站 $trashed"
             if (conflicts.isNotEmpty()) parts += "冲突 ${conflicts.size}（远端版本已另存）"
@@ -193,6 +198,7 @@ class GitHubSync(
         val treeEntries = JSONArray()
         var uploaded = 0; var downloaded = 0; var deleted = 0; var trashed = 0
         val conflicts = mutableListOf<String>()
+        val moved = mutableListOf<Pair<String, String>>()
         // 执行之后本地应有的内容。下载和移进回收站之前都核对文件还是扫描时的样子：
         // 同步要联网好几秒，这期间编辑器可能刚保存过，不能把刚打的字覆盖掉或移走（留给下次同步按冲突处理）。
         val agreed = HashMap(local)
@@ -205,6 +211,18 @@ class GitHubSync(
                     if (ifUnchanged(a.path, local[a.path]) { writeLocal(a.path, bytes) }) {
                         agreed[a.path] = remote.getValue(a.path); downloaded++
                         written[a.path] = a.path to remote.getValue(a.path)
+                    }
+                }
+                is SyncPlan.Action.MoveLocal -> {
+                    val sha = local.getValue(a.path)
+                    if (moveLocal(a.path, a.to, sha)) {
+                        agreed.remove(a.path); agreed[a.to] = sha; moved += a.path to a.to
+                    } else {
+                        // 挪不了（旧文件刚被编辑器保存过、新位置已经有文件）：新路径照常下载，旧文件留给下次同步按规则处理
+                        val r = remote.getValue(a.to)
+                        if (ifUnchanged(a.to, null) { writeLocal(a.to, blob(repoPath, r)) }) {
+                            agreed[a.to] = r; downloaded++; written[a.to] = a.to to r
+                        }
                     }
                 }
                 is SyncPlan.Action.TrashLocal -> {
@@ -259,7 +277,7 @@ class GitHubSync(
         stateFile.writeText(JSONObject().put("key", stateKey()).put("base", newBase).put("time", System.currentTimeMillis())
             .put("timesFixed", timesFixed).toString())
 
-        return Result(uploaded, downloaded, deleted, trashed, conflicts, skipped)
+        return Result(uploaded, downloaded, deleted, trashed, conflicts, skipped, moved)
     }
 
     /**
@@ -347,6 +365,25 @@ class GitHubSync(
         val now = if (f.isFile) SyncPlan.blobSha(f.readBytes()) else null
         if (now != expected) return false
         action()
+        true
+    }
+
+    /**
+     * 跟着远端改名：旧文件还是扫描时的内容、新位置没有文件时才挪。文件改名保留修改时间。
+     * 挪完旧文件夹空了就删掉（一直往上删到文档目录为止），文档管理页里不留空文件夹。
+     */
+    private fun moveLocal(from: String, to: String, sha: String): Boolean = synchronized(lock) {
+        val src = File(dir, from)
+        val dst = File(dir, to)
+        if (dst.exists() || !src.isFile || SyncPlan.blobSha(src.readBytes()) != sha) return false
+        dst.parentFile?.mkdirs()
+        if (!src.renameTo(dst)) return false
+        onMoved(from, to)
+        var folder = src.parentFile
+        while (folder != null && folder != dir && folder.list()?.isEmpty() == true) {
+            folder.delete()
+            folder = folder.parentFile
+        }
         true
     }
 

@@ -11,6 +11,7 @@ import java.util.Locale
  * - 正文以设备为准：两边都改了，推送本地版本，远端版本另存为“名字.remote-时间.md”，绝不静默丢弃任何一方。
  * - 远端删了、本地没改：移进回收站，不直接删除。
  * - 本地删了、远端没改：远端也删除。本地删了、远端又改过：把远端版本拉回来（以免误删别人刚写的内容）。
+ * - 远端改了名或挪了文件夹、内容没变（本地也没改）：本地直接挪过去，不走“移进回收站再下载”，修改时间和光标位置都留着。
  */
 object SyncPlan {
 
@@ -22,6 +23,8 @@ object SyncPlan {
         data class TrashLocal(override val path: String) : Action(path)
         /** 两边都改了：远端版本另存为 [copyPath]，然后推送本地版本。 */
         data class Conflict(override val path: String, val copyPath: String) : Action(path)
+        /** 远端把 [path] 改名成了 [to]，内容没变、本地也没改：本地照着挪。 */
+        data class MoveLocal(override val path: String, val to: String) : Action(path)
     }
 
     /**
@@ -50,9 +53,38 @@ object SyncPlan {
                 else -> out += Action.Conflict(path, copyName(path, stamp, r!!, local, remote)) // 两边都改了
             }
         }
+        pairMoves(out, local, remote)
         // 远端把 a.md 改名成 A.md 时先把 a.md 移进回收站再下载：大小写不敏感的存储上要先腾出位置
         val sameName = out.groupingBy { it.path.lowercase(Locale.ROOT) }.eachCount()
         return out.sortedBy { if (it is Action.TrashLocal && sameName.getValue(it.path.lowercase(Locale.ROOT)) > 1) 0 else 1 }
+    }
+
+    /**
+     * 远端改名（GitHub 上改文件名、改文件夹名，或者别的应用挪了位置）在三方比较里是“旧路径远端删了 + 新路径远端新建”。
+     * 内容一样（blob sha 相同）的配成一对，换成 [Action.MoveLocal]。同样内容有好几份时，先配文件名相同的（只改了文件夹），
+     * 再按路径顺序配。只差大小写的改名不配：大小写不敏感的存储上原地改名不可靠，照旧先移进回收站再下载。
+     */
+    private fun pairMoves(out: MutableList<Action>, local: Map<String, String>, remote: Map<String, String>) {
+        val gone = out.filterIsInstance<Action.TrashLocal>().groupBy { local.getValue(it.path) }
+        if (gone.isEmpty()) return
+        val added = out.filter { it is Action.Download && it.path !in local }.groupBy { remote.getValue(it.path) }
+        val moves = mutableListOf<Action.MoveLocal>()
+        for ((sha, froms) in gone) {
+            val tos = added[sha]?.map { it.path }?.toMutableList() ?: continue
+            val left = froms.map { it.path }.toMutableList()
+            fun pair(match: (String, String) -> Boolean) {
+                for (from in left.toList()) {
+                    val to = tos.firstOrNull { match(from, it) && !from.equals(it, ignoreCase = true) } ?: continue
+                    moves += Action.MoveLocal(from, to); left -= from; tos -= to
+                }
+            }
+            pair { a, b -> a.substringAfterLast('/') == b.substringAfterLast('/') }
+            pair { _, _ -> true }
+        }
+        if (moves.isEmpty()) return
+        val paired = moves.flatMap { listOf(it.path, it.to) }.toSet()
+        out.removeAll { (it is Action.TrashLocal || it is Action.Download) && it.path in paired }
+        out += moves
     }
 
     /**

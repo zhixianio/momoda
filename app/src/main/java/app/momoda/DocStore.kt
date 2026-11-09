@@ -153,7 +153,8 @@ class DocStore(private val context: Context) {
         changed()
     }
 
-    fun moveToTrash(file: File) {
+    /** [bySync]：同步跟着远端删除，不算本地改动（不用再为它同步一次）。 */
+    fun moveToTrash(file: File, bySync: Boolean = false) {
         trash.mkdirs()
         val name = Titles.uniqueFileName(file.nameWithoutExtension) { File(trash, it).exists() }
         val folder = folderOf(file)
@@ -162,7 +163,38 @@ class DocStore(private val context: Context) {
             prefs.edit().apply { if (folder.isEmpty()) remove("trashFrom:$name") else putString("trashFrom:$name", folder) }.apply()
         }
         forget(file)
-        changed()
+        if (!bySync) changed()
+    }
+
+    // ---------- 跟着远端改名 ----------
+
+    /** 同步挪过的文件：旧 key → 新 key。编辑器开着的文档被挪走时，靠它找到新位置（[movedTo]）。 */
+    private val syncMoves = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * 同步跟着远端改名挪了 [from] → [to]（同步线程里、拿着锁调用）。光标位置、打开记录跟过去；
+     * 只挪了文件夹、文件名没变时，“文件名跟着标题改”也照旧，改了文件名就不再自动改回去。不算本地改动。
+     */
+    fun movedBySync(from: String, to: String) {
+        known.move(File(dir, from).absolutePath, File(dir, to).absolutePath, File(dir, to).lastModified())
+        val cursor = prefs.getInt("cursor:$from", -1)
+        val made = prefs.getBoolean("made:$from", false) && from.substringAfterLast('/') == to.substringAfterLast('/')
+        prefs.edit().apply {
+            remove("cursor:$from"); remove("made:$from")
+            if (cursor >= 0) putInt("cursor:$to", cursor)
+            if (made) putBoolean("made:$to", true)
+        }.apply()
+        if (lastDocName == from) lastDocName = to
+        if (previousDocName == from) previousDocName = to
+        syncMoves[from] = to
+    }
+
+    /** [file] 被同步挪走了的话，它现在的位置（连续改过几次名也跟到底）；没挪过返回 null。 */
+    fun movedTo(file: File): File? {
+        var key = key(file)
+        var moved = false
+        while (true) { key = syncMoves[key] ?: break; moved = true }
+        return if (moved) File(dir, key) else null
     }
 
     // ---------- 回收站 ----------

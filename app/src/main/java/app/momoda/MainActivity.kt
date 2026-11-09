@@ -394,6 +394,8 @@ class MainActivity : Activity() {
             try {
                 // 后台同步写本地文件时也拿这把锁：检查和写入之间不会被同步插进来
                 val copy = synchronized(store) {
+                    // 同步刚跟着远端改名把这篇挪走了：跟过去，存到新位置
+                    store.movedTo(doc)?.let { doc = it }
                     if (store.changedOnDisk(doc)) {
                         // 文档被别的程序改过（例如通过 USB 拷进了新版本）：不覆盖对方，把我们的版本另存一份
                         store.saveConflictCopy(doc, text)
@@ -1071,8 +1073,8 @@ class MainActivity : Activity() {
 
     // ---------- GitHub 同步（DESIGN §5） ----------
 
-    private fun makeSync() = GitHubSync(sync.target(), store.dir, File(filesDir, "sync-state.json"), moveToTrash = { f -> store.moveToTrash(f) }, lock = store,
-        disposable = { _, bytes -> store.isUntouchedWelcome(bytes) })
+    private fun makeSync() = GitHubSync(sync.target(), store.dir, File(filesDir, "sync-state.json"), moveToTrash = { f -> store.moveToTrash(f, bySync = true) }, lock = store,
+        disposable = { _, bytes -> store.isUntouchedWelcome(bytes) }, onMoved = store::movedBySync)
 
     private fun showSyncConfig() {
         save()
@@ -1265,6 +1267,7 @@ class MainActivity : Activity() {
     /** 同步改动了本地文件：当前文档被删就换一篇；没有未保存修改就载入新版本。 */
     private fun afterExternalChange() {
         // 还有没保存的字：先保存。文件被同步改过或移走时，save() 会把编辑器里的版本另存一份
+        store.movedTo(doc)?.let { doc = it; store.lastDocName = store.key(it) }
         if (dirty) save()
         if (dirty) return // 保存失败：编辑器里的内容是唯一的一份，留着它，save() 会自动重试
         if (!doc.exists()) { loadDoc(store.openLastOrCreate()); return }
