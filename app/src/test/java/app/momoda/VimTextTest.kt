@@ -84,11 +84,6 @@ class VimTextTest {
 
     @Test fun findMissing() = assertEquals(-1, VimText.find("甲乙", "丙", 0, forward = true))
 
-    @Test fun gapLineStart() {
-        val t = "甲\n\n\n乙"
-        assertEquals(listOf(2), t.indices.filter { VimText.isGapLineStart(t, it) })
-    }
-
     @Test fun pasteLinesAfterAddsSeparator() {
         val t = "甲\n\n丙"
         val (at, text, cursor) = VimText.pasteLinesAfter(t, 0, "乙")

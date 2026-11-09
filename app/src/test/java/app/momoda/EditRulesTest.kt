@@ -21,7 +21,7 @@ class EditRulesTest {
         val text = StringBuilder(before.replace("|", ""))
         check(text[pos] == '\n')
         text.deleteCharAt(pos)
-        val edit = EditRules.afterNewlineDeleted(text, pos) ?: return text.insert(pos, "|").toString()
+        val edit = ParagraphGap.afterNewlineDeleted(text, pos) ?: return text.insert(pos, "|").toString()
         text.replace(edit.start, edit.end, edit.text)
         return text.insert(edit.cursor, "|").toString()
     }
@@ -32,7 +32,7 @@ class EditRulesTest {
         val text = StringBuilder(before.replace("|", ""))
         check(text[pos] == '\n')
         text.deleteCharAt(pos)
-        val edit = EditRules.afterNewlineDeleted(text, pos) ?: return text.insert(pos, "|").toString()
+        val edit = ParagraphGap.afterNewlineDeleted(text, pos) ?: return text.insert(pos, "|").toString()
         text.replace(edit.start, edit.end, edit.text)
         return text.insert(edit.cursor, "|").toString()
     }
@@ -73,7 +73,7 @@ class EditRulesTest {
 
     @Test fun forwardDeleteMergesParagraphs() = assertEquals("第一段|第二段", forwardDelete("第一段|\n\n第二段"))
 
-    @Test fun noRuleAtDocumentStart() = assertNull(EditRules.afterNewlineDeleted("\n正文", 0))
+    @Test fun noRuleAtDocumentStart() = assertNull(ParagraphGap.afterNewlineDeleted("\n正文", 0))
 
     /** 以前 `toInt()` 溢出抛异常：打字时整个 App 崩溃。 */
     @Test fun hugeNumberedListDoesNotCrash() =

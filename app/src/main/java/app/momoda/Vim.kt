@@ -548,10 +548,11 @@ class Vim(
         if (c > 0 && (c == text.length || text[c] == '\n') && text[c - 1] != '\n') move(c - 1)
     }
 
-    /** 左右移一个字符；落到段距空行上就再移一个（那一行只有 1/4 行高，不是能写字的地方）。 */
+    /** 左右移一个字符；不停在段距行上（[ParagraphGap.snap]）。 */
     private fun moveChar(delta: Int) {
         move(cursor + delta)
-        if (VimText.isGapLineStart(text, cursor)) move(cursor + delta)
+        val snapped = ParagraphGap.snap(text, cursor, forward = delta > 0)
+        if (snapped != cursor) move(snapped)
     }
 
     private fun moveLine(delta: Int) {

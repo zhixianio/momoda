@@ -105,7 +105,7 @@ class EditorView(context: Context) : EditText(context) {
         return styledPaint
     }
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xAA, 0xAA, 0xAA) }
-    private val spacing = BlankLineSpacing()
+    private val spacing = ParagraphSpacing()
 
     /** TextView 的构造函数会回调下面的重写方法，那时本类的字段还没初始化。 */
     private var ready = false
@@ -347,7 +347,7 @@ class EditorView(context: Context) : EditText(context) {
             softBreakPending = false
             val edit = when {
                 insertedNewlineAt >= 0 -> EditRules.afterNewline(s, insertedNewlineAt, soft)
-                deletedNewlineAt >= 0 -> EditRules.afterNewlineDeleted(s, deletedNewlineAt)
+                deletedNewlineAt >= 0 -> ParagraphGap.afterNewlineDeleted(s, deletedNewlineAt)
                 else -> null
             }
             if (edit != null) {
@@ -423,50 +423,33 @@ class EditorView(context: Context) : EditText(context) {
         return handled
     }
 
-    /**
-     * 上下移动后光标落在段距空行上（只有 1/4 行高，光标画在那里看起来飘在两段之间）：再往同一方向移一行。
-     * [x] 是移动前光标的横坐标，尽量保持在同一列。
-     */
     private var lastCursor = 0
 
     /**
-     * 光标不停在段距空行上：那一行只有 1/4 行高，是“回车空一行”在屏幕上的样子，不是能写字的地方。
-     * 不管是方向键、vim、笔点还是删除让光标落到这里，都按移动方向挪到相邻的文字行：
-     * 往前（往上、往左）挪到上一段末尾，往后挪到下一段开头。
+     * 光标不停在段距行上（[ParagraphGap.snap]）：那一行不占高度，不是能写字的地方。
+     * 不管是方向键、vim、笔点还是删除让光标落到这里，都按移动方向挪开：往前到上一段末尾，往后到下一段开头。
      */
     private val gapGuard = Runnable {
         val s = selectionStart
         val t = text
         if (s < 0 || s != selectionEnd || t == null) return@Runnable
         if (BaseInputConnection.getComposingSpanStart(t) >= 0) { lastCursor = s; return@Runnable }
-        val l = layout ?: return@Runnable
-        if (onParagraphGap()) {
-            val start = l.getLineStart(l.getLineForOffset(s))
-            val target = if (s < lastCursor) start - 1 else start + 1
-            lastCursor = target.coerceIn(0, t.length)
-            setSelection(lastCursor)
-        } else {
-            lastCursor = s
-        }
+        val target = ParagraphGap.snap(t, s, forward = s >= lastCursor)
+        lastCursor = target
+        if (target != s) setSelection(target)
     }
 
-    /** 光标是不是停在段距空行上。 */
-    fun onParagraphGap(): Boolean {
-        val l = layout ?: return false
-        val t = text ?: return false
-        val s = selectionStart
-        if (s < 0) return false
-        val line = l.getLineForOffset(s)
-        return BlankLineSpacing.isParagraphGap(t, l.getLineStart(line), l.getLineEnd(line))
-    }
-
+    /**
+     * 上下移动后光标落在段距行上：再往同一方向移一行，到真正的文字行。
+     * [x] 是移动前光标的横坐标，尽量保持在同一列。
+     */
     fun skipParagraphGap(direction: Int, x: Float) {
         val l = layout ?: return
         val t = text ?: return
         val s = selectionStart
         if (s < 0 || s != selectionEnd) return
+        if (!ParagraphGap.isGapStart(t, s)) return
         val line = l.getLineForOffset(s)
-        if (!BlankLineSpacing.isParagraphGap(t, l.getLineStart(line), l.getLineEnd(line))) return
         val target = line + direction
         if (target !in 0 until l.lineCount) return
         setSelection(l.getOffsetForHorizontal(target, x))
@@ -579,9 +562,9 @@ class EditorView(context: Context) : EditText(context) {
         val bottom = l.getLineBottom(line) + extendedPaddingTop
         if (scrollMode == ScrollMode.CONTINUOUS) {
             // 多露出一行：往下写时看得到下一行的位置，往上移时看得到上一行
-            // 相邻的是段距空行时再多算一行，露出的是真正的文字行
+            // 相邻的是段距行（不占高度）时再多算一行，露出的是真正的文字行
             val t = text
-            fun gap(n: Int) = n in 0 until l.lineCount && BlankLineSpacing.isParagraphGap(t, l.getLineStart(n), l.getLineEnd(n))
+            fun gap(n: Int) = n in 0 until l.lineCount && ParagraphGap.isGapLine(t, l.getLineStart(n), l.getLineEnd(n))
             val next = (if (gap(line + 1)) line + 2 else line + 1).coerceAtMost(l.lineCount - 1)
             val prev = (if (gap(line - 1)) line - 2 else line - 1).coerceAtLeast(0)
             val below = l.getLineBottom(next) - l.getLineBottom(line)
@@ -592,7 +575,7 @@ class EditorView(context: Context) : EditText(context) {
                     val min = bottom + below - (height - extendedPaddingBottom)
                     var ln = l.getLineForVertical(min)
                     if (l.getLineTop(ln) < min && ln + 1 < l.lineCount) ln++
-                    // 屏幕顶端不停在段距空行上：否则下一次只滚这 1/4 行
+                    // 屏幕顶端不停在段距行上
                     if (gap(ln) && ln + 1 < l.lineCount) ln++
                     l.getLineTop(ln)
                 }
@@ -717,12 +700,6 @@ class EditorView(context: Context) : EditText(context) {
         val baseline = (extendedPaddingTop + l.getLineBaseline(line)).toFloat()
         var top = baseline + paint.ascent()
         var bottom = baseline + paint.descent()
-        val t0 = text
-        if (t0 != null && BlankLineSpacing.isParagraphGap(t0, l.getLineStart(line), l.getLineEnd(line))) {
-            // 段距空行只有 1/4 行高：光标按这一行的实际高度画，不伸进上下两段的文字里
-            top = (extendedPaddingTop + l.getLineTop(line)).toFloat()
-            bottom = (extendedPaddingTop + l.getLineBottom(line)).toFloat()
-        }
         val t = text
         if (blockCursor) {
             val ch = if (start < t.length && t[start] != '\n') t[start].toString() else null
@@ -769,25 +746,17 @@ class EditorView(context: Context) : EditText(context) {
     }
 
     /**
-     * 空行（段落之间的分隔）只占 [ratio] 倍行高，替代整行空白（DESIGN §2.3）。
-     * 真机反馈半行高仍然偏大，改为 1/4；M2 做成设置里可调的“段距”。
+     * 段距（DESIGN §2.3，规则都在 [ParagraphGap]）：段距行只占 [ratio] 倍行高，光标不停在上面。
+     *
+     * 段距画在段距行自己身上，不加在下一段第一行的上方：Android 排一段文字时，前一行用 LineHeightSpan 加高的行高
+     * 会带到同一段后面的折行上，下一段要是折成好几行，每行之间都会被撑开。段距行自成一段，没有这个问题。
+     * 行距倍数是按字体高度乘出来的，所以直接按比例缩字体高度，整行（含行距）就按同样比例缩小。
      */
-    internal class BlankLineSpacing(var ratio: Float = 0.25f) : LineHeightSpan {
-        companion object {
-            /**
-             * 这一行是不是“段距”：紧跟在文字行后面的第一个空行。之后连续的空行是用户有意留的空白，按正常行高显示，
-             * 否则光标在几个空行里上下移动、删除时每次只挪四分之一行，看起来像行距突然变得很小。
-             */
-            fun isParagraphGap(text: CharSequence, start: Int, end: Int): Boolean =
-                end - start == 1 && text[start] == '\n' &&
-                    start >= 2 && text[start - 1] == '\n' && text[start - 2] != '\n'
-        }
-
+    internal class ParagraphSpacing(var ratio: Float = 0.25f) : LineHeightSpan {
         override fun chooseHeight(
             text: CharSequence, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: Paint.FontMetricsInt,
         ) {
-            if (!isParagraphGap(text, start, end)) return
-            // 行距倍数是按字体高度乘出来的，所以直接缩字体高度，整行（含行距）就按同样比例缩小
+            if (!ParagraphGap.isGapLine(text, start, end)) return
             fm.descent = fm.ascent + ((fm.descent - fm.ascent) * ratio).toInt()
             fm.bottom = fm.descent
             fm.top = fm.ascent
